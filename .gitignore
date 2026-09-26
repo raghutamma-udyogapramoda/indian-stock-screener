@@ -1,0 +1,30 @@
+# Environment & Secrets (NEVER COMMIT)
+.env
+.env.local
+*.env
+
+# Python Virtual Environments
+.venv/
+venv/
+env/
+ENV/
+
+# Python Cache & Bytecode
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.pytest_cache/
+
+# Local Data Cache & Diagnostics
+data/cache/*.parquet
+data/cache/*.json
+logs/
+scratch/
+API_DATA_AUDIT_REPORT.txt
+
+# OS & IDE Files
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/

@@ -1,0 +1,11 @@
+pandas
+numpy
+scipy
+yfinance
+pyarrow
+streamlit
+plotly
+google-genai
+python-dotenv
+requests
+breeze-connect

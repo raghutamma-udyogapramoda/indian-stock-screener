@@ -1,0 +1,286 @@
+"""
+Universe Manager for Indian Equities (NSE/BSE).
+Supports Nifty 50, Nifty 500, F&O Universe, and Custom/All Stocks.
+"""
+
+import os
+from pathlib import Path
+from typing import List
+import pandas as pd
+import requests
+
+from config.settings import UNIVERSES_DIR
+
+# Reliable built-in seed list for Nifty 50
+NIFTY_50_SEED = [
+    "RELIANCE", "TCS", "HDFCBANK", "INFY", "ICICIBANK", "BHARTIARTL", "SBIN", "LICI",
+    "ITC", "HINDUNILVR", "LT", "BAJFINANCE", "HCLTECH", "MARUTI", "SUNPHARMA",
+    "ONGC", "KOTAKBANK", "TITAN", "TMPV", "NTPC", "AXISBANK", "ADANIENT",
+    "COALINDIA", "POWERGRID", "ASIANPAINT", "ULTRACEMCO", "BAJAJFINSV", "M&M",
+    "TATASTEEL", "SIEMENS", "GRASIM", "TECHM", "NESTLEIND", "JSWSTEEL", "ADANIPORTS",
+    "SBILIFE", "WIPRO", "HDFCLIFE", "BPCL", "TRENT", "BRITANNIA", "CIPLA",
+    "TATACONSUM", "BAJAJ-AUTO", "HINDALCO", "DIVISLAB", "EICHERMOT", "APOLLOHOSP",
+    "SHRIRAMFIN", "BEL"
+]
+
+# Comprehensive liquid F&O underlying universe
+NSE_FO_SEED = [
+    "AARTIIND", "ABB", "ABBOTINDIA", "ABCAPITAL", "ABFRL", "ACC", "ADANIENT",
+    "ADANIPORTS", "ALKEM", "AMBUJACEM", "APOLLOHOSP", "APOLLOTYRE", "ASHOKLEY",
+    "ASIANPAINT", "ASTRAL", "ATUL", "AUBANK", "AUROPHARMA", "AXISBANK",
+    "BAJAJ-AUTO", "BAJAJFINSV", "BAJFINANCE", "BALKRISIND", "BALRAMCHIN",
+    "BANDHANBNK", "BANKBARODA", "BATAINDIA", "BEL", "BERGEPAINT", "BHARATFORG",
+    "BHARTIARTL", "BHEL", "BIOCON", "BOSCHLTD", "BPCL", "BRITANNIA", "BSOFT",
+    "CANBK", "CANFINHOME", "CHAMBLFERT", "CHOLAFIN", "CIPLA", "COALINDIA",
+    "COFORGE", "COLPAL", "CONCOR", "COROMANDEL", "CROMPTON", "CUB", "CUMMINSIND",
+    "DABUR", "DALBHARAT", "DEEPAKNTR", "DELHIVERY", "DIVISLAB", "DIXON", "DLF",
+    "DRREDDY", "EICHERMOT", "ESCORTS", "EXIDEIND", "FEDERALBNK", "GAIL",
+    "GLENMARK", "GMRAIRPORT", "GNFC", "GODREJCP", "GODREJPROP", "GRANULES",
+    "GRASIM", "HAL", "HAVELLS", "HCLTECH", "HDFCAMC", "HDFCBANK",
+    "HDFCLIFE", "HEROMOTOCO", "HINDALCO", "HINDPETRO", "HINDUNILVR", "ICICIBANK",
+    "ICICIGI", "ICICIPRULI", "IDEA", "IDFCFIRSTB", "IEX", "IGL", "INDHOTEL",
+    "INDIAMART", "INDIANB", "INDIGO", "INDUSINDBK", "INDUSTOWER", "INFY",
+    "IOC", "IPCALAB", "IRCTC", "ITC", "JINDALSTEL", "JIOFIN", "JKCEMENT",
+    "JSWSTEEL", "JUBLFOOD", "KOTAKBANK", "LTF", "LALPATHLAB", "LAURUSLABS",
+    "LICHSGFIN", "LICI", "LT", "LTTS", "LUPIN", "M&M", "M&MFIN", "MANAPPURAM",
+    "MARICO", "MARUTI", "UNITDSPR", "MCX", "METROPOLIS", "MFSL", "MGL",
+    "MOTHERSON", "MPHASIS", "MRF", "MUTHOOTFIN", "NATIONALUM", "NAUKRI",
+    "NAVINFLUOR", "NESTLEIND", "NMDC", "NTPC", "OBEROIRLTY", "OFSS", "ONGC",
+    "PAGEIND", "PERSISTENT", "PETRONET", "PFC", "PIDILITIND", "PIIND",
+    "PNB", "POLYCAB", "POWERGRID", "PVRINOX", "RAMCOCEM", "RBLBANK", "RECLTD",
+    "RELIANCE", "SAIL", "SBICARD", "SBILIFE", "SBIN", "SHREECEM", "SHRIRAMFIN",
+    "SIEMENS", "SRF", "SUNPHARMA", "SUNTV", "SYNGENE", "TATACHEM", "TATACOMM",
+    "TATACONSUM", "TATAELXSI", "TATAPOWER", "TATASTEEL", "TATATECH", "TECHM",
+    "TITAN", "TMPV", "TORNTPHARM", "TORNTPOWER", "TRENT", "TVSMOTOR", "UBL",
+    "ULTRACEMCO", "UNIONBANK", "UPL", "VEDL", "VOLTAS", "WIPRO"
+]
+
+# Major liquid MCX commodity symbols
+MCX_COMMODITIES_SEED = [
+    "GOLD", "SILVER", "CRUDEOIL", "NATURALGAS", "COPPER", "ZINC", "ALUMINIUM"
+]
+
+# Major Indian Market & Sectoral Indices
+INDICES_SEED = [
+    "NIFTY", "BANKNIFTY", "SENSEX", "FINNIFTY", "MIDCPNIFTY", "NIFTYIT", "INDIAVIX"
+]
+
+# Mapping MCX commodity symbols to Yahoo Finance futures / ETF tickers for fallback
+MCX_TO_YFINANCE = {
+    "GOLD": "GC=F",
+    "SILVER": "SI=F",
+    "CRUDEOIL": "CL=F",
+    "NATURALGAS": "NG=F",
+    "COPPER": "HG=F",
+    "ZINC": "ZNC=F",
+    "ALUMINIUM": "ALI=F",
+}
+
+YFINANCE_TO_MCX = {v: k for k, v in MCX_TO_YFINANCE.items()}
+
+# Mapping Indian Indices to Yahoo Finance symbols
+INDEX_TO_YFINANCE = {
+    "NIFTY": "^NSEI",
+    "NIFTY50": "^NSEI",
+    "NIFTY_50": "^NSEI",
+    "BANKNIFTY": "^NSEBANK",
+    "BANK_NIFTY": "^NSEBANK",
+    "SENSEX": "^BSESN",
+    "FINNIFTY": "NIFTY_FIN_SERVICE.NS",
+    "FIN_NIFTY": "NIFTY_FIN_SERVICE.NS",
+    "MIDCPNIFTY": "^NSEMDCP50",
+    "MIDCAP_NIFTY": "^NSEMDCP50",
+    "NIFTYIT": "^CNXIT",
+    "NIFTY_IT": "^CNXIT",
+    "INDIAVIX": "^INDIAVIX",
+    "INDIA_VIX": "^INDIAVIX",
+}
+
+YFINANCE_TO_INDEX = {v: k for k, v in INDEX_TO_YFINANCE.items()}
+
+
+class UniverseManager:
+    """Manages stock universe definitions and handles exchange ticker conversions."""
+
+    @staticmethod
+    def get_tickers(universe_name: str = "NIFTY_50") -> List[str]:
+        """
+        Loads symbols for a chosen universe:
+        Options: 'NIFTY_50', 'NIFTY_500', 'NSE_FO', 'MCX_COMMODITIES', 'INDICES', or custom path/comma-separated string.
+        """
+        universe_name = universe_name.strip().upper()
+
+        if universe_name in ["NIFTY_50", "NIFTY50"]:
+            return UniverseManager._load_nifty_50()
+        elif universe_name in ["NIFTY_500", "NIFTY500"]:
+            return UniverseManager._load_nifty_500()
+        elif universe_name in ["NSE_FO", "NIFTY_FO", "FNO", "FO"]:
+            return UniverseManager._load_fno()
+        elif universe_name in ["MCX", "MCX_COMMODITIES", "COMMODITIES", "COMMODITY"]:
+            return UniverseManager._load_mcx_commodities()
+        elif universe_name in ["INDICES", "INDEX", "MARKET_INDICES", "SECTORAL_INDICES"]:
+            return UniverseManager._load_indices()
+        else:
+            # Check if file exists in universes directory
+            file_path = UNIVERSES_DIR / f"{universe_name.lower()}.txt"
+            if file_path.exists():
+                with open(file_path, "r", encoding="utf-8") as f:
+                    return [line.strip().upper() for line in f if line.strip() and not line.startswith("#")]
+            
+            # Treat as comma-separated tickers if passed directly
+            if "," in universe_name or " " in universe_name:
+                return [s.strip().upper() for s in universe_name.replace(",", " ").split() if s.strip()]
+
+            return UniverseManager._load_nifty_50()
+
+    @staticmethod
+    def _load_nifty_50() -> List[str]:
+        file_path = UNIVERSES_DIR / "nifty_50.txt"
+        if file_path.exists():
+            with open(file_path, "r", encoding="utf-8") as f:
+                symbols = [line.strip().upper() for line in f if line.strip() and not line.startswith("#")]
+                if len(symbols) >= 45:
+                    return symbols
+
+        # Attempt downloading live official Nifty 50 CSV from NSE
+        csv_url = "https://archives.nseindia.com/content/indices/ind_nifty50list.csv"
+        headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
+        try:
+            resp = requests.get(csv_url, headers=headers, timeout=10)
+            if resp.status_code == 200:
+                df = pd.read_csv(pd.io.common.StringIO(resp.text))
+                if "Symbol" in df.columns:
+                    symbols = df["Symbol"].dropna().str.strip().str.upper().tolist()
+                    with open(file_path, "w", encoding="utf-8") as f:
+                        f.write("\n".join(symbols))
+                    return symbols
+        except Exception:
+            pass
+
+        # Write reliable seed
+        with open(file_path, "w", encoding="utf-8") as f:
+            f.write("\n".join(NIFTY_50_SEED))
+        return NIFTY_50_SEED
+
+    @staticmethod
+    def _load_nifty_500() -> List[str]:
+        file_path = UNIVERSES_DIR / "nifty_500.txt"
+        if file_path.exists():
+            with open(file_path, "r", encoding="utf-8") as f:
+                symbols = [line.strip().upper() for line in f if line.strip() and not line.startswith("#")]
+                if len(symbols) >= 100:
+                    return symbols
+
+        # Attempt downloading official Nifty 500 CSV from NSE
+        csv_url = "https://archives.nseindia.com/content/indices/ind_nifty500list.csv"
+        headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
+        try:
+            resp = requests.get(csv_url, headers=headers, timeout=10)
+            if resp.status_code == 200:
+                df = pd.read_csv(pd.io.common.StringIO(resp.text))
+                if "Symbol" in df.columns:
+                    symbols = df["Symbol"].dropna().str.strip().str.upper().tolist()
+                    with open(file_path, "w", encoding="utf-8") as f:
+                        f.write("\n".join(symbols))
+                    return symbols
+        except Exception:
+            pass
+
+        # Fallback to Nifty 50
+        return UniverseManager._load_nifty_50()
+
+    @staticmethod
+    def _load_fno() -> List[str]:
+        """Loads liquid F&O underlying stocks."""
+        file_path = UNIVERSES_DIR / "nse_fo.txt"
+        if file_path.exists():
+            with open(file_path, "r", encoding="utf-8") as f:
+                symbols = [line.strip().upper() for line in f if line.strip() and not line.startswith("#")]
+                if len(symbols) >= 50:
+                    return symbols
+
+        # Save the full F&O seed list
+        with open(file_path, "w", encoding="utf-8") as f:
+            f.write("\n".join(NSE_FO_SEED))
+        return NSE_FO_SEED
+
+    @staticmethod
+    def _load_indices() -> List[str]:
+        """Loads major Indian market & sectoral index symbols."""
+        file_path = UNIVERSES_DIR / "indices.txt"
+        if file_path.exists():
+            with open(file_path, "r", encoding="utf-8") as f:
+                symbols = [line.strip().upper() for line in f if line.strip() and not line.startswith("#")]
+                if len(symbols) >= 3:
+                    return symbols
+
+        with open(file_path, "w", encoding="utf-8") as f:
+            f.write("\n".join(INDICES_SEED))
+        return INDICES_SEED
+
+    @staticmethod
+    def _load_mcx_commodities() -> List[str]:
+        """Loads liquid MCX commodity symbols."""
+        file_path = UNIVERSES_DIR / "mcx_commodities.txt"
+        if file_path.exists():
+            with open(file_path, "r", encoding="utf-8") as f:
+                symbols = [line.strip().upper() for line in f if line.strip() and not line.startswith("#")]
+                if len(symbols) >= 3:
+                    return symbols
+
+        with open(file_path, "w", encoding="utf-8") as f:
+            f.write("\n".join(MCX_COMMODITIES_SEED))
+        return MCX_COMMODITIES_SEED
+
+    @staticmethod
+    def is_commodity(symbol: str) -> bool:
+        """Checks if a symbol is an MCX commodity or mapped commodity future."""
+        clean = UniverseManager.to_clean_symbol(symbol)
+        return clean in MCX_COMMODITIES_SEED or symbol.upper() in MCX_TO_YFINANCE or symbol.upper() in YFINANCE_TO_MCX
+
+    @staticmethod
+    def is_index(symbol: str) -> bool:
+        """Checks if a symbol is an Indian market index (e.g. NIFTY, BANKNIFTY, SENSEX)."""
+        clean = UniverseManager.to_clean_symbol(symbol)
+        return clean in INDICES_SEED or symbol.upper() in INDEX_TO_YFINANCE or symbol.startswith("^")
+
+    @staticmethod
+    def get_exchange(symbol: str) -> str:
+        """Returns the primary exchange for the asset ('MCX', 'BSE', or 'NSE')."""
+        clean = UniverseManager.to_clean_symbol(symbol)
+        if UniverseManager.is_commodity(symbol):
+            return "MCX"
+        if clean in ["SENSEX", "BSESN"] or symbol.upper().endswith(".BO"):
+            return "BSE"
+        return "NSE"
+
+    @staticmethod
+    def to_yfinance_symbol(symbol: str, exchange: str = "NSE") -> str:
+        """
+        Converts symbol to Yahoo Finance ticker format.
+        Maps Indian indices (e.g. NIFTY -> ^NSEI, BANKNIFTY -> ^NSEBANK, SENSEX -> ^BSESN),
+        MCX commodities (e.g. GOLD -> GC=F, CRUDEOIL -> CL=F),
+        and Indian equities (e.g. RELIANCE -> RELIANCE.NS).
+        """
+        clean = UniverseManager.to_clean_symbol(symbol)
+        if clean in INDEX_TO_YFINANCE:
+            return INDEX_TO_YFINANCE[clean]
+        if clean in MCX_TO_YFINANCE:
+            return MCX_TO_YFINANCE[clean]
+
+        if symbol.startswith("^") or symbol.endswith(".NS") or symbol.endswith(".BO") or "=" in symbol:
+            return symbol
+
+        suffix = ".BO" if exchange.upper() == "BSE" or clean == "SENSEX" else ".NS"
+        return f"{clean}{suffix}"
+
+    @staticmethod
+    def to_clean_symbol(symbol: str) -> str:
+        """Strips exchange suffixes (.NS, .BO, =F, ^) and returns clean base code."""
+        s = symbol.upper()
+        if s in YFINANCE_TO_INDEX:
+            return YFINANCE_TO_INDEX[s]
+        if s in YFINANCE_TO_MCX:
+            return YFINANCE_TO_MCX[s]
+        clean = s.replace(".NS", "").replace(".BO", "").replace("^", "")
+        return clean
