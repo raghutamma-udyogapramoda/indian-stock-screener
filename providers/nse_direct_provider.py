@@ -60,7 +60,7 @@ class NSEDirectProvider(BaseDataProvider):
             for domain in domains:
                 url = f"https://{domain}/products/content/sec_bhavdata_full_{date_str}.csv"
                 try:
-                    resp = session.get(url, timeout=8)
+                    resp = session.get(url, timeout=3.5)
                     if resp.status_code == 200 and len(resp.text) > 10000:
                         df = pd.read_csv(io.StringIO(resp.text))
                         df.columns = df.columns.str.strip()
@@ -70,11 +70,18 @@ class NSEDirectProvider(BaseDataProvider):
                         df["DATE"] = check_date.strftime("%Y-%m-%d")
                         self.data_source_mode = "LIVE"
                         return df
+                    elif resp.status_code == 403:
+                        self.api_failure_reasons.append(f"{domain} returned HTTP 403 (NSE CDN blocks cloud datacenter IPs)")
+                        break
                     else:
                         self.api_failure_reasons.append(f"{domain} returned HTTP {resp.status_code} for {date_str}")
                 except Exception as e:
-                    self.api_failure_reasons.append(f"{domain} error for {date_str}: {type(e).__name__} ({str(e)[:80]})")
+                    self.api_failure_reasons.append(f"{domain} error: {type(e).__name__} ({str(e)[:60]})")
                     continue
+
+            # If cloud datacenter IP is blocked by NSE CDN (403), skip querying older dates
+            if any("HTTP 403" in r for r in self.api_failure_reasons):
+                break
 
         # All dates and domains failed
         self.api_call_failed = True

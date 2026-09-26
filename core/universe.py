@@ -108,17 +108,18 @@ class UniverseManager:
         Loads symbols for a chosen universe:
         Options: 'NIFTY_50', 'NIFTY_500', 'NSE_FO', 'MCX_COMMODITIES', 'INDICES', or custom path/comma-separated string.
         """
-        universe_name = universe_name.strip().upper()
+        raw_name = universe_name.strip().upper()
+        u_norm = raw_name.replace(" ", "_").replace("-", "_")
 
-        if universe_name in ["NIFTY_50", "NIFTY50"]:
+        if u_norm in ["NIFTY_50", "NIFTY50"]:
             return UniverseManager._load_nifty_50()
-        elif universe_name in ["NIFTY_500", "NIFTY500"]:
+        elif u_norm in ["NIFTY_500", "NIFTY500"]:
             return UniverseManager._load_nifty_500()
-        elif universe_name in ["NSE_FO", "NIFTY_FO", "FNO", "FO"]:
+        elif u_norm in ["NSE_FO", "NIFTY_FO", "FNO", "FO"]:
             return UniverseManager._load_fno()
-        elif universe_name in ["MCX", "MCX_COMMODITIES", "COMMODITIES", "COMMODITY"]:
+        elif u_norm in ["MCX", "MCX_COMMODITIES", "COMMODITIES", "COMMODITY"]:
             return UniverseManager._load_mcx_commodities()
-        elif universe_name in ["INDICES", "INDEX", "MARKET_INDICES", "SECTORAL_INDICES"]:
+        elif any(k in u_norm for k in ["INDICES", "INDEX", "MARKET_INDICES", "SECTORAL_INDICES"]):
             return UniverseManager._load_indices()
         else:
             # Check if file exists in universes directory

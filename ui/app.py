@@ -196,12 +196,17 @@ force_live_refresh = st.sidebar.checkbox(
 cache_ttl = st.sidebar.slider("Cache Freshness (Hours)", min_value=1, max_value=24, value=4)
 run_btn = st.sidebar.button("🔍 Run Live Market Screen", type="primary", use_container_width=True)
 
+if st.sidebar.button("🧹 Flush Cache & Reset Memory", use_container_width=True):
+    st.cache_data.clear()
+    st.session_state.clear()
+    st.toast("✅ App memory cache flushed! Re-running screeners...", icon="🧹")
+    st.rerun()
+
 # ----------------- MAIN APP -----------------
 st.title("📈 Indian Equities & Commodities AI Screener")
 st.caption("Quantitative Multi-Strategy Algorithmic Screener with Low-Cost AI Trade Plan Generation (NSE, BSE & MCX)")
 
-# Helper to run scan
-@st.cache_data(ttl=cache_ttl * 3600, show_spinner=False)
+# Helper to run scan (disk-cached by LocalDataCache)
 def execute_screening(u_name, custom_list, strat, top_limit, prov_mode, b_key="", b_sec="", b_tok="", bypass_cache=False):
     t_start = time.time()
     
