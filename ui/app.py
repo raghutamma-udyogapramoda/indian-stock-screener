@@ -26,6 +26,7 @@ from plotly.subplots import make_subplots
 import streamlit as st
 
 from ai.advisor import AIAdvisor
+from core.auth import render_login_gate, render_sidebar_user_badge
 from core.indices import IndexDerivativesAnalyzer, INDEX_SPECS
 from core.universe import UniverseManager
 from core.indicators import enrich_with_indicators
@@ -91,7 +92,13 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
+# ----------------- AUTHENTICATION GATE -----------------
+# Ensure only authenticated users can access screeners and market results
+if not render_login_gate():
+    st.stop()
+
 # ----------------- SIDEBAR -----------------
+render_sidebar_user_badge()
 st.sidebar.title("⚡ Screener Controls")
 
 provider_choice = st.sidebar.selectbox(

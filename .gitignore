@@ -2,6 +2,8 @@
 .env
 .env.local
 *.env
+.streamlit/secrets.toml
+secrets.toml
 
 # Python Virtual Environments
 .venv/
