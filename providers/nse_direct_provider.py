@@ -85,9 +85,10 @@ class NSEDirectProvider(BaseDataProvider):
         """
         clean = UniverseManager.to_clean_symbol(symbol)
         
-        # MCX commodities do not trade on NSE equity segment
+        # MCX commodities do not trade on NSE equity segment: delegate to calibrated commodity provider
         if UniverseManager.is_commodity(clean):
-            return self.cache.get(clean) if use_cache else None
+            from providers.yfinance_provider import YahooFinanceProvider
+            return YahooFinanceProvider(cache_ttl_hours=self.cache.ttl_hours).fetch_ohlcv(clean, period=period, interval=interval, use_cache=use_cache)
 
         # 1. Check local cache
         cached_df = self.cache.get(clean) if use_cache else None

@@ -742,10 +742,24 @@ if run_btn or "cached_results" in st.session_state:
                     tailwind_badge = f"{sector_val} 🌊" if c.get("has_sector_tailwind") else sector_val
                     panic_badge = "🛡️ YES" if c.get("panic_day_resilient") else "—"
 
+                    comm_unit = ""
+                    sym_c = c["symbol"]
+                    if UniverseManager.is_commodity(sym_c):
+                        comm_unit_map = {
+                            "GOLD": " (₹/10g)",
+                            "SILVER": " (₹/kg)",
+                            "CRUDEOIL": " (₹/bbl)",
+                            "NATURALGAS": " (₹/mmBtu)",
+                            "COPPER": " (₹/kg)",
+                            "ZINC": " (₹/kg)",
+                            "ALUMINIUM": " (₹/kg)",
+                        }
+                        comm_unit = comm_unit_map.get(sym_c, " (MCX)")
+
                     row = {
                         "Symbol": c["symbol"],
                         "Score": c["score"],
-                        "LTP (₹)": c["close"],
+                        "LTP (₹)": f"₹{c['close']:,.2f}{comm_unit}" if comm_unit else c["close"],
                         "Change %": f"{c['change_pct']:+.2f}%",
                         "50% Retest Level": retest_str,
                         "Sector Tailwind": tailwind_badge,
@@ -771,11 +785,24 @@ if run_btn or "cached_results" in st.session_state:
             if selected_sym in data_dict:
                 df_chart = enrich_with_indicators(data_dict[selected_sym].tail(120).copy())
 
+                comm_chart_tag = ""
+                if UniverseManager.is_commodity(selected_sym):
+                    comm_chart_map = {
+                        "GOLD": " (MCX ₹ / 10g)",
+                        "SILVER": " (MCX ₹ / kg)",
+                        "CRUDEOIL": " (MCX ₹ / bbl)",
+                        "NATURALGAS": " (MCX ₹ / mmBtu)",
+                        "COPPER": " (MCX ₹ / kg)",
+                        "ZINC": " (MCX ₹ / kg)",
+                        "ALUMINIUM": " (MCX ₹ / kg)",
+                    }
+                    comm_chart_tag = comm_chart_map.get(selected_sym, " (MCX)")
+
                 fig = make_subplots(
                     rows=2, cols=1,
                     shared_xaxes=True,
                     vertical_spacing=0.04,
-                    subplot_titles=(f"{selected_sym} — Price & Moving Averages", "Volume & RVol"),
+                    subplot_titles=(f"{selected_sym} — Price & Moving Averages{comm_chart_tag}", "Volume & RVol"),
                     row_heights=[0.75, 0.25]
                 )
 

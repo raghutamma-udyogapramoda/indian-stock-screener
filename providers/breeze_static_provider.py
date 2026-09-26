@@ -115,12 +115,16 @@ class BreezeStaticProvider(BaseDataProvider):
     def ensure_sample_fixtures(self):
         """Creates sample Breeze API JSON fixtures for breakout, breakdown, and control assets."""
         fixtures = [
-            ("GOLD", "BREAKOUT", 72000.0, 81500.0, 8000),      # MCX Commodity Breakout
-            ("TRENT", "BREAKOUT", 4200.0, 7250.0, 450000),     # NSE Equity Breakout
-            ("CRUDEOIL", "BREAKDOWN", 6800.0, 5450.0, 12000),   # MCX Commodity Breakdown
-            ("ASIANPAINT", "BREAKDOWN", 3100.0, 2280.0, 850000), # NSE Equity Breakdown
-            ("RELIANCE", "NEUTRAL", 1250.0, 1265.0, 3200000),   # NSE Equity Neutral
-            ("SILVER", "CONSOLIDATION", 85000.0, 92000.0, 15000) # MCX Commodity Consolidation
+            ("GOLD", "BREAKOUT", 72000.0, 76500.0, 8000),         # MCX Commodity Breakout (~₹76,500 / 10g)
+            ("TRENT", "BREAKOUT", 4200.0, 7250.0, 450000),        # NSE Equity Breakout
+            ("CRUDEOIL", "BREAKDOWN", 6800.0, 5850.0, 12000),      # MCX Commodity Breakdown (~₹5,850 / bbl)
+            ("ASIANPAINT", "BREAKDOWN", 3100.0, 2280.0, 850000),   # NSE Equity Breakdown
+            ("RELIANCE", "NEUTRAL", 1250.0, 1265.0, 3200000),      # NSE Equity Neutral
+            ("SILVER", "CONSOLIDATION", 88000.0, 88200.0, 15000),  # MCX Commodity Consolidation (~₹88,200 / kg)
+            ("NATURALGAS", "NEUTRAL", 260.0, 235.0, 25000),       # MCX Commodity (~₹235 / mmBtu)
+            ("COPPER", "NEUTRAL", 780.0, 825.0, 18000),           # MCX Commodity (~₹825 / kg)
+            ("ZINC", "NEUTRAL", 250.0, 272.0, 14000),             # MCX Commodity (~₹272 / kg)
+            ("ALUMINIUM", "NEUTRAL", 220.0, 241.0, 16000),        # MCX Commodity (~₹241 / kg)
         ]
 
         for symbol, pattern, base_price, current_price, avg_vol in fixtures:
@@ -130,10 +134,23 @@ class BreezeStaticProvider(BaseDataProvider):
 
     def _generate_fixture(self, symbol: str) -> pd.DataFrame:
         """Generates and writes a default fixture if a requested symbol is missing."""
-        is_comm = UniverseManager.is_commodity(symbol)
-        base = 50000.0 if is_comm else 1500.0
-        avg_vol = 10000 if is_comm else 200000
-        self._save_static_breeze_json(symbol, "NEUTRAL", base, base * 1.05, avg_vol)
+        comm_defaults = {
+            "GOLD": (72000.0, 76500.0, 8000),
+            "SILVER": (85000.0, 90200.0, 15000),
+            "CRUDEOIL": (6800.0, 5850.0, 12000),
+            "NATURALGAS": (260.0, 235.0, 25000),
+            "COPPER": (780.0, 825.0, 18000),
+            "ZINC": (250.0, 272.0, 14000),
+            "ALUMINIUM": (220.0, 241.0, 16000),
+        }
+        if symbol in comm_defaults:
+            base, final, vol = comm_defaults[symbol]
+        else:
+            is_comm = UniverseManager.is_commodity(symbol)
+            base = 1000.0 if is_comm else 1500.0
+            final = base * 1.05
+            vol = 10000 if is_comm else 200000
+        self._save_static_breeze_json(symbol, "NEUTRAL", base, final, vol)
         with open(self.static_dir / f"{symbol}.json", "r", encoding="utf-8") as f:
             data = json.load(f)
         return BreezeProvider.parse_breeze_response(data)
