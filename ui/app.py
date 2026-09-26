@@ -88,10 +88,19 @@ def plot_position_chart(symbol: str, df: pd.DataFrame, buy_price: float, stop_lo
 
 def render_item_tracker_view(current_user: str, data_dict: Dict[str, pd.DataFrame]):
     """Renders the comprehensive Live Item Tracker for the authenticated user."""
-    st.subheader(f"📌 {current_user.upper()}'s Live Item Tracker & Portfolio Watch")
-    st.caption("Real-time position monitoring with intelligent BUY, HOLD, EXIT, and AVERAGE DOWN (Fake Fall / Shakeout Detection) signals.")
-
     positions = PortfolioTracker.load_positions(current_user)
+
+    h_col1, h_col2 = st.columns([3, 1])
+    with h_col1:
+        st.subheader(f"📌 {current_user.upper()}'s Live Item Tracker & Portfolio Watch")
+        st.caption("Real-time position monitoring with intelligent BUY, HOLD, EXIT, and AVERAGE DOWN (Fake Fall / Shakeout Detection) signals.")
+    with h_col2:
+        if positions:
+            if st.button("🧹 Clear All Positions", type="secondary", use_container_width=True, key=f"clear_all_{current_user}", help="Remove all tracked items"):
+                PortfolioTracker.clear_all_positions(current_user)
+                st.toast("✅ Cleared all tracked positions.", icon="🧹")
+                time.sleep(0.3)
+                st.rerun()
 
     # 1. Fetch live data for any tracked positions not in data_dict
     needed_syms = []
@@ -122,8 +131,8 @@ def render_item_tracker_view(current_user: str, data_dict: Dict[str, pd.DataFram
         evaluated.append(res)
 
     # 3. Portfolio Summary KPIs
-    tot_invested = sum(r["invested_val"] for r in evaluated)
-    tot_current = sum(r["current_val"] for r in evaluated)
+    tot_invested = sum(r["invested_val"] for r in evaluated) if evaluated else 0.0
+    tot_current = sum(r["current_val"] for r in evaluated) if evaluated else 0.0
     tot_pnl = tot_current - tot_invested
     tot_pnl_pct = (tot_pnl / tot_invested * 100) if tot_invested > 0 else 0.0
 
@@ -133,8 +142,8 @@ def render_item_tracker_view(current_user: str, data_dict: Dict[str, pd.DataFram
     kpi3.metric(
         "Total Unrealized P&L",
         f"₹{tot_pnl:+,.2f} ({tot_pnl_pct:+.2f}%)",
-        delta=f"{tot_pnl_pct:+.2f}%",
-        delta_color="normal"
+        delta=f"{tot_pnl_pct:+.2f}%" if tot_invested > 0 else "0.00%",
+        delta_color="normal" if tot_invested > 0 else "off"
     )
     kpi4.metric("Active Positions", f"{len(positions)} Tracked")
 
@@ -166,12 +175,12 @@ def render_item_tracker_view(current_user: str, data_dict: Dict[str, pd.DataFram
             f_col1, f_col2, f_col3 = st.columns(3)
             new_sym = f_col1.text_input("Asset Symbol / Contract", placeholder="e.g. RELIANCE, NIFTY 25000 CE, GOLD")
             new_type = f_col2.selectbox("Asset Type", ["EQUITY", "INDEX", "FUTURES", "OPTION_CE", "OPTION_PE", "COMMODITY"])
-            new_buy = f_col3.number_input("Your Buy / Entry Price (₹)", min_value=0.01, step=1.0, value=100.0)
+            new_buy = f_col3.number_input("Your Buy / Entry Price (₹)", min_value=0.0, step=1.0, value=0.0, help="Enter the exact purchase price at which you bought this asset")
 
             f_col4, f_col5, f_col6 = st.columns(3)
-            new_qty = f_col4.number_input("Quantity / Units / Lots", min_value=1.0, step=1.0, value=50.0)
-            new_sl = f_col5.number_input("Stop Loss (₹, optional)", min_value=0.0, step=1.0, value=round(new_buy * 0.95, 2))
-            new_tgt = f_col6.number_input("Target Price (₹, optional)", min_value=0.0, step=1.0, value=round(new_buy * 1.10, 2))
+            new_qty = f_col4.number_input("Quantity / Units / Lots", min_value=1.0, step=1.0, value=1.0)
+            new_sl = f_col5.number_input("Stop Loss (₹, optional)", min_value=0.0, step=1.0, value=0.0)
+            new_tgt = f_col6.number_input("Target Price (₹, optional)", min_value=0.0, step=1.0, value=0.0)
 
             new_notes = st.text_input("Strategy Notes (Optional)", placeholder="e.g. Breakout setup from screener, monthly expiry hedge")
 
@@ -179,6 +188,8 @@ def render_item_tracker_view(current_user: str, data_dict: Dict[str, pd.DataFram
             if add_submit:
                 if not new_sym.strip():
                     st.error("Please provide a valid symbol.")
+                elif float(new_buy) <= 0:
+                    st.error("Please enter your actual Buy / Entry Price (greater than ₹0).")
                 else:
                     PortfolioTracker.add_position(
                         username=current_user,
@@ -196,7 +207,7 @@ def render_item_tracker_view(current_user: str, data_dict: Dict[str, pd.DataFram
 
     # 5. Position Cards
     if not evaluated:
-        st.info("💡 You have no tracked positions yet. Add a stock using the form above or click **'📌 Track this Position'** on any setup in the **AI Trade Plans** tab.")
+        st.info("💡 You have no tracked positions yet. Use the form above to add stocks/options you bought, or click **'📌 Track this Position'** on any setup in the **AI Trade Plans** tab.")
     else:
         st.markdown("### 📋 Active Tracked Positions & Live Decision Engine")
         for idx, item in enumerate(evaluated):

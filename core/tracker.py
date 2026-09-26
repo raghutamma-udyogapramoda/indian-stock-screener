@@ -126,6 +126,12 @@ class PortfolioTracker:
         return False
 
     @classmethod
+    def clear_all_positions(cls, username: str) -> bool:
+        """Removes all tracked positions for a user."""
+        cls.save_positions(username, [])
+        return True
+
+    @classmethod
     def update_position(cls, username: str, position_id: str, updates: dict) -> bool:
         """Updates fields of an existing position."""
         positions = cls.load_positions(username)
