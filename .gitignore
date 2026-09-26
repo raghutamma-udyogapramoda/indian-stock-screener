@@ -21,6 +21,8 @@ __pycache__/
 # Local Data Cache & Diagnostics
 data/cache/*.parquet
 data/cache/*.json
+data/tracker/*.json
+!data/tracker/.gitkeep
 logs/
 scratch/
 API_DATA_AUDIT_REPORT.txt

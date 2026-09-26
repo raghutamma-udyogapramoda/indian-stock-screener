@@ -8,6 +8,7 @@ import time
 import os
 import sys
 from pathlib import Path
+from typing import Dict, List, Optional
 
 # Add project root to path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -26,8 +27,9 @@ from plotly.subplots import make_subplots
 import streamlit as st
 
 from ai.advisor import AIAdvisor
-from core.auth import render_login_gate, render_sidebar_user_badge
+from core.auth import render_login_gate, render_sidebar_user_badge, get_current_user
 from core.indices import IndexDerivativesAnalyzer, INDEX_SPECS
+from core.tracker import PortfolioTracker
 from core.universe import UniverseManager
 from core.indicators import enrich_with_indicators
 from providers.breeze_provider import BreezeProvider
@@ -54,6 +56,202 @@ def render_html(html_str: str):
         st.html(html_str)
     else:
         st.markdown(html_str, unsafe_allow_html=True)
+
+
+def plot_position_chart(symbol: str, df: pd.DataFrame, buy_price: float, stop_loss: float, target: float):
+    """Renders a candlestick chart highlighting entry price, stop-loss, and target levels."""
+    recent = df.tail(60).copy()
+    fig = go.Figure()
+    fig.add_trace(go.Candlestick(
+        x=recent.index,
+        open=recent['open'],
+        high=recent['high'],
+        low=recent['low'],
+        close=recent['close'],
+        name="Price",
+        increasing_line_color="#00E676",
+        decreasing_line_color="#FF5252"
+    ))
+    fig.add_hline(y=buy_price, line_dash="dash", line_color="#2962FF", annotation_text=f"Buy: ₹{buy_price:,.2f}", annotation_position="top left")
+    fig.add_hline(y=stop_loss, line_dash="dot", line_color="#FF5252", annotation_text=f"SL: ₹{stop_loss:,.2f}", annotation_position="bottom left")
+    fig.add_hline(y=target, line_dash="dashdot", line_color="#00E676", annotation_text=f"Target: ₹{target:,.2f}", annotation_position="top right")
+    
+    fig.update_layout(
+        title=f"{symbol} — Trailing Position Technicals & Trigger Levels",
+        template="plotly_dark",
+        height=320,
+        margin=dict(l=10, r=10, t=35, b=10),
+        xaxis_rangeslider_visible=False
+    )
+    st.plotly_chart(fig, use_container_width=True)
+
+
+def render_item_tracker_view(current_user: str, data_dict: Dict[str, pd.DataFrame]):
+    """Renders the comprehensive Live Item Tracker for the authenticated user."""
+    st.subheader(f"📌 {current_user.upper()}'s Live Item Tracker & Portfolio Watch")
+    st.caption("Real-time position monitoring with intelligent BUY, HOLD, EXIT, and AVERAGE DOWN (Fake Fall / Shakeout Detection) signals.")
+
+    positions = PortfolioTracker.load_positions(current_user)
+
+    # 1. Fetch live data for any tracked positions not in data_dict
+    needed_syms = []
+    for p in positions:
+        und = p.get("underlying") or PortfolioTracker.get_underlying_symbol(p.get("symbol", ""))
+        if und and und not in data_dict:
+            needed_syms.append(und)
+    
+    active_data = dict(data_dict)
+    if needed_syms:
+        try:
+            yf_fallback = YahooFinanceProvider(cache_ttl_hours=1.0)
+            fetched = yf_fallback.fetch_batch_ohlcv(list(set(needed_syms)), period="6mo", interval="1d", max_workers=5)
+            for s, df in fetched.items():
+                if df is not None and not df.empty:
+                    active_data[s] = df
+        except Exception:
+            pass
+
+    # 2. Evaluate all positions
+    evaluated = []
+    for p in positions:
+        und = p.get("underlying") or PortfolioTracker.get_underlying_symbol(p.get("symbol", ""))
+        df_for_pos = active_data.get(und) or active_data.get(p.get("symbol"))
+        res = PortfolioTracker.evaluate_live_position(p, df_for_pos)
+        evaluated.append(res)
+
+    # 3. Portfolio Summary KPIs
+    tot_invested = sum(r["invested_val"] for r in evaluated)
+    tot_current = sum(r["current_val"] for r in evaluated)
+    tot_pnl = tot_current - tot_invested
+    tot_pnl_pct = (tot_pnl / tot_invested * 100) if tot_invested > 0 else 0.0
+
+    kpi1, kpi2, kpi3, kpi4 = st.columns(4)
+    kpi1.metric("Total Portfolio Value", f"₹{tot_current:,.2f}")
+    kpi2.metric("Total Invested Capital", f"₹{tot_invested:,.2f}")
+    kpi3.metric(
+        "Total Unrealized P&L",
+        f"₹{tot_pnl:+,.2f} ({tot_pnl_pct:+.2f}%)",
+        delta=f"{tot_pnl_pct:+.2f}%",
+        delta_color="normal"
+    )
+    kpi4.metric("Active Positions", f"{len(positions)} Tracked")
+
+    # Action distribution summary
+    if evaluated:
+        n_avg = sum(1 for r in evaluated if r["action_type"] == "AVERAGE_DOWN")
+        n_hold = sum(1 for r in evaluated if "HOLD" in r["action_type"])
+        n_fake_rise = sum(1 for r in evaluated if r["action_type"] == "FAKE_RISE")
+        n_sl = sum(1 for r in evaluated if r["action_type"] == "EXIT")
+        n_tgt = sum(1 for r in evaluated if r["action_type"] == "TARGET_HIT")
+
+        st.markdown(
+            f'<div style="background: #131722; border: 1px solid #2a2e39; border-radius: 8px; padding: 10px 16px; margin: 12px 0 20px 0; font-size: 0.85rem;">'
+            f'<b>Decision Distribution:</b> '
+            f'<span style="color: #00E676; margin-right: 14px;">🟢 Average Down (Fake Fall): <b>{n_avg}</b></span> '
+            f'<span style="color: #64B5F6; margin-right: 14px;">🟢 Strong Hold: <b>{n_hold}</b></span> '
+            f'<span style="color: #FF9800; margin-right: 14px;">⚠️ Fake Rise Alert: <b>{n_fake_rise}</b></span> '
+            f'<span style="color: #FF5252; margin-right: 14px;">🛑 Exit (SL Broken): <b>{n_sl}</b></span> '
+            f'<span style="color: #FFD54F;">🎯 Target Hit: <b>{n_tgt}</b></span>'
+            f'</div>',
+            unsafe_allow_html=True
+        )
+
+    st.markdown("---")
+
+    # 4. Form: Add Position Manually
+    with st.expander("➕ Add Stock / Index / Option / Future to Tracker", expanded=(len(positions) == 0)):
+        with st.form("manual_add_tracker_form", clear_on_submit=True):
+            f_col1, f_col2, f_col3 = st.columns(3)
+            new_sym = f_col1.text_input("Asset Symbol / Contract", placeholder="e.g. RELIANCE, NIFTY 25000 CE, GOLD")
+            new_type = f_col2.selectbox("Asset Type", ["EQUITY", "INDEX", "FUTURES", "OPTION_CE", "OPTION_PE", "COMMODITY"])
+            new_buy = f_col3.number_input("Your Buy / Entry Price (₹)", min_value=0.01, step=1.0, value=100.0)
+
+            f_col4, f_col5, f_col6 = st.columns(3)
+            new_qty = f_col4.number_input("Quantity / Units / Lots", min_value=1.0, step=1.0, value=50.0)
+            new_sl = f_col5.number_input("Stop Loss (₹, optional)", min_value=0.0, step=1.0, value=round(new_buy * 0.95, 2))
+            new_tgt = f_col6.number_input("Target Price (₹, optional)", min_value=0.0, step=1.0, value=round(new_buy * 1.10, 2))
+
+            new_notes = st.text_input("Strategy Notes (Optional)", placeholder="e.g. Breakout setup from screener, monthly expiry hedge")
+
+            add_submit = st.form_submit_button("➕ Add to My Live Tracker", type="primary", use_container_width=True)
+            if add_submit:
+                if not new_sym.strip():
+                    st.error("Please provide a valid symbol.")
+                else:
+                    PortfolioTracker.add_position(
+                        username=current_user,
+                        symbol=new_sym.strip(),
+                        buy_price=float(new_buy),
+                        qty=float(new_qty),
+                        asset_type=new_type,
+                        stop_loss=float(new_sl) if new_sl > 0 else None,
+                        target=float(new_tgt) if new_tgt > 0 else None,
+                        notes=new_notes
+                    )
+                    st.toast(f"✅ Added {new_sym.upper()} to your tracker!", icon="📌")
+                    time.sleep(0.4)
+                    st.rerun()
+
+    # 5. Position Cards
+    if not evaluated:
+        st.info("💡 You have no tracked positions yet. Add a stock using the form above or click **'📌 Track this Position'** on any setup in the **AI Trade Plans** tab.")
+    else:
+        st.markdown("### 📋 Active Tracked Positions & Live Decision Engine")
+        for idx, item in enumerate(evaluated):
+            pos_id = item["id"]
+            action_type = item["action_type"]
+            badge_color = item["action_color"]
+            border_color = badge_color
+            bg_color = "#131722"
+
+            pnl_val = item["pnl_val"]
+            pnl_pct = item["pnl_pct"]
+            pnl_badge_color = "#00E676" if pnl_val >= 0 else "#FF5252"
+            pnl_badge_bg = "rgba(0, 230, 118, 0.15)" if pnl_val >= 0 else "rgba(255, 82, 82, 0.15)"
+
+            # Callout card
+            card_html = (
+                f'<div style="background-color: {bg_color}; border-left: 6px solid {border_color}; border-radius: 10px; padding: 18px; margin-bottom: 12px; border-top: 1px solid #2a2e39; border-right: 1px solid #2a2e39; border-bottom: 1px solid #2a2e39; box-shadow: 0 4px 12px rgba(0,0,0,0.3);">'
+                f'<div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap;">'
+                f'<div>'
+                f'<span style="background-color: #2962FF; color: #FFF; padding: 2px 8px; border-radius: 4px; font-size: 0.75rem; font-weight: bold; margin-right: 8px;">{item["asset_type"]}</span>'
+                f'<span style="font-size: 1.35rem; font-weight: bold; color: #FFF;">{item["symbol"]}</span> '
+                f'<span style="color: #787b86; font-size: 0.85rem; margin-left: 8px;">Bought: {item["buy_date"]}</span>'
+                f'</div>'
+                f'<div style="text-align: right;">'
+                f'<span style="background-color: {badge_color}; color: #000; padding: 4px 12px; border-radius: 4px; font-weight: bold; font-size: 0.85rem;">{item["action_badge"]}</span>'
+                f'</div>'
+                f'</div>'
+                f'<div style="display: grid; grid-template-columns: repeat(6, 1fr); gap: 10px; background-color: #0e1117; padding: 12px; border-radius: 6px; margin: 14px 0 10px 0;">'
+                f'<div><span style="color: #787b86; font-size: 0.75rem;">Buy Price</span><br><b style="color: #FFF; font-size: 1.05rem;">₹{item["buy_price"]:,.2f}</b></div>'
+                f'<div><span style="color: #787b86; font-size: 0.75rem;">Live CMP</span><br><b style="color: #00E676; font-size: 1.05rem;">₹{item["current_price"]:,.2f}</b></div>'
+                f'<div><span style="color: #787b86; font-size: 0.75rem;">Quantity</span><br><b style="color: #FFF; font-size: 1.05rem;">{item["qty"]}</b></div>'
+                f'<div><span style="color: #787b86; font-size: 0.75rem;">Unrealized P&L</span><br><b style="color: {pnl_badge_color}; font-size: 1.05rem; background: {pnl_badge_bg}; padding: 2px 6px; border-radius: 4px;">{pnl_pct:+.2f}% (₹{pnl_val:+,.2f})</b></div>'
+                f'<div><span style="color: #787b86; font-size: 0.75rem;">Stop Loss</span><br><b style="color: #FF5252; font-size: 1.05rem;">₹{item["stop_loss"]:,.2f}</b></div>'
+                f'<div><span style="color: #787b86; font-size: 0.75rem;">Target</span><br><b style="color: #64B5F6; font-size: 1.05rem;">₹{item["target"]:,.2f}</b></div>'
+                f'</div>'
+                f'<div style="background-color: #1a1e29; border-left: 4px solid {border_color}; border-radius: 6px; padding: 10px 14px; margin-top: 10px;">'
+                f'<div style="font-size: 0.88rem; color: #FFF; margin-bottom: 4px;"><b>🧠 Decision Rationale:</b> {item["rationale"]}</div>'
+                f'<div style="font-size: 0.88rem; color: #FFD54F;"><b>💡 Suggested Tactical Action:</b> {item["suggested_action"]}</div>'
+                f'</div>'
+                f'</div>'
+            )
+            render_html(card_html)
+
+            # Chart and Deletion expander
+            und = item.get("underlying") or PortfolioTracker.get_underlying_symbol(item["symbol"])
+            df_for_pos = active_data.get(und) or active_data.get(item["symbol"])
+            with st.expander(f"📊 Chart & Position Controls for {item['symbol']}"):
+                if df_for_pos is not None and not df_for_pos.empty:
+                    plot_position_chart(item['symbol'], df_for_pos, item['buy_price'], item['stop_loss'], item['target'])
+                
+                col_del, col_space = st.columns([1, 4])
+                with col_del:
+                    if st.button("🗑️ Delete Position", key=f"del_pos_{pos_id}_{idx}", type="secondary"):
+                        PortfolioTracker.delete_position(current_user, pos_id)
+                        st.toast(f"Removed {item['symbol']} from your tracker.", icon="🗑️")
+                        time.sleep(0.3)
+                        st.rerun()
 
 
 # Custom Styling
@@ -455,10 +653,11 @@ if run_btn or "cached_results" in st.session_state:
 
     st.markdown("---")
 
-    tab_indices, tab_ai, tab_screeners, tab_charts, tab_docs, tab_audit = st.tabs([
+    tab_indices, tab_ai, tab_screeners, tab_tracker, tab_charts, tab_docs, tab_audit = st.tabs([
         "🏛️ Indices Hub",
         "🤖 AI Trade Plans",
         "📊 Strategy Shortlists",
+        "📌 Live Item Tracker",
         "📈 Technical Chart View",
         "⚙️ Strategy Documentation",
         "🔍 API Data Audit & Proof"
@@ -754,6 +953,47 @@ if run_btn or "cached_results" in st.session_state:
                     )
                     render_html(card_html)
 
+                    # Quick 1-click Add to Item Tracker
+                    current_user_name = get_current_user() or "trader"
+                    with st.expander(f"📌 Track {p.get('symbol')} in My Item Tracker"):
+                        with st.form(f"track_form_{idx}_{p.get('symbol')}", clear_on_submit=False):
+                            tr_c1, tr_c2 = st.columns(2)
+                            tr_buy = tr_c1.number_input("Entry Price (₹)", value=float(p.get("entry_price", 100.0)), key=f"tr_buy_{idx}")
+                            default_qty = 50.0
+                            sz = str(p.get("shares_for_2k_risk", ""))
+                            if sz.isdigit():
+                                default_qty = float(sz)
+                            tr_qty = tr_c2.number_input("Quantity / Units", value=default_qty, min_value=1.0, key=f"tr_qty_{idx}")
+                            
+                            tr_c3, tr_c4 = st.columns(2)
+                            raw_cat = str(p.get("category", "")).upper()
+                            def_type_idx = 0
+                            if "OPTION" in raw_cat or "PE" in action or "CE" in action:
+                                def_type_idx = 2 if "PE" in action else 1
+                            elif UniverseManager.is_commodity(p.get("symbol", "")):
+                                def_type_idx = 4
+                            tr_type = tr_c3.selectbox("Asset Type", ["EQUITY", "OPTION_CE", "OPTION_PE", "FUTURES", "COMMODITY", "INDEX"], index=def_type_idx, key=f"tr_type_{idx}")
+                            tr_sl = tr_c4.number_input("Stop Loss (₹)", value=float(p.get("tight_stop_loss", p.get("stop_loss", tr_buy * 0.95))), key=f"tr_sl_{idx}")
+                            
+                            tr_tgt = float(p.get("target_1", tr_buy * 1.10))
+                            tr_notes = f"{p.get('category')} setup - {p.get('thesis', '')[:80]}"
+                            
+                            tr_submit = st.form_submit_button(f"➕ Track {p.get('symbol')} in Live Portfolio", type="primary", use_container_width=True)
+                            if tr_submit:
+                                PortfolioTracker.add_position(
+                                    username=current_user_name,
+                                    symbol=p.get("symbol"),
+                                    buy_price=float(tr_buy),
+                                    qty=float(tr_qty),
+                                    asset_type=tr_type,
+                                    stop_loss=float(tr_sl),
+                                    target=float(tr_tgt),
+                                    notes=tr_notes
+                                )
+                                st.toast(f"✅ Added {p.get('symbol')} to {current_user_name}'s Item Tracker!", icon="📌")
+                                time.sleep(0.4)
+                                st.rerun()
+
     with tab_screeners:
         for cat, c_list in results.items():
             st.subheader(f"📌 {cat} Setups ({len(c_list)})")
@@ -804,6 +1044,9 @@ if run_btn or "cached_results" in st.session_state:
                 st.dataframe(pd.DataFrame(table_data), use_container_width=True)
             else:
                 st.caption("No stocks met this specific category's thresholds.")
+
+    with tab_tracker:
+        render_item_tracker_view(current_user=get_current_user() or "trader", data_dict=data_dict)
 
     with tab_charts:
         st.subheader("Interactive Candlestick & Technical Inspector")
@@ -996,4 +1239,5 @@ if run_btn or "cached_results" in st.session_state:
             st.info("Run a screen to inspect candidate raw data and indicators.")
 
 else:
-    st.info("👈 Select your options on the sidebar and click **'Run Live Market Screen'** to begin.")
+    st.info("👈 Select your options on the sidebar and click **'Run Live Market Screen'** to begin market scans, or review and manage your live tracked positions below:")
+    render_item_tracker_view(current_user=get_current_user() or "trader", data_dict={})
