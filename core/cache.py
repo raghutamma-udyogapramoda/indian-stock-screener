@@ -16,6 +16,7 @@ class LocalDataCache:
 
     def __init__(self, cache_dir: Path = CACHE_DIR, ttl_hours: float = 4.0):
         self.cache_dir = cache_dir
+        self.ttl_hours = ttl_hours
         self.ttl_seconds = ttl_hours * 3600
         self.cache_dir.mkdir(parents=True, exist_ok=True)
 
@@ -66,6 +67,10 @@ class LocalDataCache:
                 df.to_csv(path.with_suffix(".csv"))
             except Exception:
                 pass
+
+    def set(self, symbol: str, df: pd.DataFrame, **kwargs) -> None:
+        """Alias for save() to provide standard cache set interface."""
+        self.save(symbol, df)
 
     def exists(self, symbol: str) -> bool:
         return self._get_path(symbol).exists()
