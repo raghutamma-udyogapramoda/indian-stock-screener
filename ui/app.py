@@ -110,6 +110,11 @@ breeze_api_key_in = ""
 breeze_secret_key_in = ""
 breeze_session_token_in = ""
 
+# Auto-detect session token if redirected from Breeze API login URL
+url_session_token = ""
+if hasattr(st, "query_params") and "apisession" in st.query_params:
+    url_session_token = st.query_params.get("apisession", "")
+
 if provider_choice == "ICICI Breeze (Live Account)":
     with st.sidebar.expander("🔑 Breeze Broker Credentials", expanded=True):
         breeze_api_key_in = st.text_input(
@@ -123,12 +128,23 @@ if provider_choice == "ICICI Breeze (Live Account)":
             value=os.getenv("BREEZE_SECRET_KEY", ""),
             type="password"
         )
+        
+        # Pre-fill with auto-captured URL session token if present
+        default_token = url_session_token or os.getenv("BREEZE_SESSION_TOKEN", "")
+        if url_session_token:
+            st.success("✅ Auto-captured Session Token from URL!")
+            
         breeze_session_token_in = st.text_input(
             "Daily Session Token",
-            value=os.getenv("BREEZE_SESSION_TOKEN", ""),
+            value=default_token,
             type="password",
             help="Generate daily by logging into the ICICI Direct API portal."
         )
+
+        if breeze_api_key_in and not breeze_api_key_in.startswith("your_"):
+            login_url = f"https://api.icicidirect.com/apiuser/login?api_key={breeze_api_key_in}"
+            st.markdown(f'<a href="{login_url}" target="_blank" style="display: block; text-align: center; background: #004D25; color: #00E676; border: 1px solid #00E676; border-radius: 4px; padding: 6px; font-size: 0.82rem; font-weight: bold; text-decoration: none; margin-top: 6px;">🔗 Login to Breeze (Get Daily Token)</a>', unsafe_allow_html=True)
+            st.caption("Redirects back to this app with token auto-filled.")
 
 universe_choice = st.sidebar.selectbox(
     "Select Asset Universe",
