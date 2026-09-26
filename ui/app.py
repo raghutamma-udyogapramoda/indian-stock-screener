@@ -115,7 +115,9 @@ def render_item_tracker_view(current_user: str, data_dict: Dict[str, pd.DataFram
     evaluated = []
     for p in positions:
         und = p.get("underlying") or PortfolioTracker.get_underlying_symbol(p.get("symbol", ""))
-        df_for_pos = active_data.get(und) or active_data.get(p.get("symbol"))
+        df_for_pos = active_data.get(und)
+        if df_for_pos is None or (isinstance(df_for_pos, pd.DataFrame) and df_for_pos.empty):
+            df_for_pos = active_data.get(p.get("symbol", ""))
         res = PortfolioTracker.evaluate_live_position(p, df_for_pos)
         evaluated.append(res)
 
@@ -240,7 +242,9 @@ def render_item_tracker_view(current_user: str, data_dict: Dict[str, pd.DataFram
 
             # Chart and Deletion expander
             und = item.get("underlying") or PortfolioTracker.get_underlying_symbol(item["symbol"])
-            df_for_pos = active_data.get(und) or active_data.get(item["symbol"])
+            df_for_pos = active_data.get(und)
+            if df_for_pos is None or (isinstance(df_for_pos, pd.DataFrame) and df_for_pos.empty):
+                df_for_pos = active_data.get(item["symbol"])
             with st.expander(f"📊 Chart & Position Controls for {item['symbol']}"):
                 if df_for_pos is not None and not df_for_pos.empty:
                     plot_position_chart(item['symbol'], df_for_pos, item['buy_price'], item['stop_loss'], item['target'])
