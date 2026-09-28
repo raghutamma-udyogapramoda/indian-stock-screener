@@ -10,8 +10,12 @@ import sys
 from pathlib import Path
 from typing import Dict, List, Optional
 
-# Add project root to path
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+# Add project root and current working directory to sys.path
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+if os.getcwd() not in sys.path:
+    sys.path.insert(0, os.getcwd())
 
 # Ensure proper Unicode/emoji handling on Windows console
 if sys.platform == "win32":
@@ -26,8 +30,22 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 import streamlit as st
 
+# Robust import for core.auth with filesystem fallback
+try:
+    from core.auth import render_login_gate, render_sidebar_user_badge, get_current_user, is_admin
+except Exception:
+    import importlib.util
+    _auth_file = PROJECT_ROOT / "core" / "auth.py"
+    _spec = importlib.util.spec_from_file_location("core.auth", str(_auth_file))
+    _auth_mod = importlib.util.module_from_spec(_spec)
+    sys.modules["core.auth"] = _auth_mod
+    _spec.loader.exec_module(_auth_mod)
+    render_login_gate = _auth_mod.render_login_gate
+    render_sidebar_user_badge = _auth_mod.render_sidebar_user_badge
+    get_current_user = _auth_mod.get_current_user
+    is_admin = _auth_mod.is_admin
+
 from ai.advisor import AIAdvisor
-from core.auth import render_login_gate, render_sidebar_user_badge, get_current_user, is_admin
 from core.indices import IndexDerivativesAnalyzer, INDEX_SPECS
 from core.tracker import PortfolioTracker
 from core.universe import UniverseManager
