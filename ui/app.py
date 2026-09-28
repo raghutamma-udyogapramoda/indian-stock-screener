@@ -256,11 +256,18 @@ def render_live_tracked_positions_fragment(target_user: str, data_dict: Dict[str
         chg_color = "#00E676" if day_chg >= 0 else "#FF5252"
 
         # Callout card
+        comm_unit_badge = ""
+        unit_lbl = ""
+        if item.get("commodity_unit"):
+            comm_unit_badge = f'<span style="background-color: #E65100; color: #FFF; padding: 2px 8px; border-radius: 4px; font-size: 0.75rem; font-weight: bold; margin-right: 8px;">{item["commodity_unit"]}</span>'
+            unit_lbl = f" ({item['commodity_unit']})"
+
         card_html = (
             f'<div style="background-color: {bg_color}; border-left: 6px solid {border_color}; border-radius: 10px; padding: 18px; margin-bottom: 12px; border-top: 1px solid #2a2e39; border-right: 1px solid #2a2e39; border-bottom: 1px solid #2a2e39; box-shadow: 0 4px 12px rgba(0,0,0,0.3);">'
             f'<div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap;">'
             f'<div>'
             f'<span style="background-color: #2962FF; color: #FFF; padding: 2px 8px; border-radius: 4px; font-size: 0.75rem; font-weight: bold; margin-right: 8px;">{item["asset_type"]}</span>'
+            f'{comm_unit_badge}'
             f'<span style="font-size: 1.35rem; font-weight: bold; color: #FFF;">{item["symbol"]}</span> '
             f'<span style="color: #787b86; font-size: 0.85rem; margin-left: 8px;">Bought: {item["buy_date"]}</span>'
             f'</div>'
@@ -269,8 +276,8 @@ def render_live_tracked_positions_fragment(target_user: str, data_dict: Dict[str
             f'</div>'
             f'</div>'
             f'<div style="display: grid; grid-template-columns: repeat(6, 1fr); gap: 10px; background-color: #0e1117; padding: 12px; border-radius: 6px; margin: 14px 0 10px 0;">'
-            f'<div><span style="color: #787b86; font-size: 0.75rem;">Buy Price</span><br><b style="color: #FFF; font-size: 1.05rem;">₹{item["buy_price"]:,.2f}</b></div>'
-            f'<div><span style="color: #787b86; font-size: 0.75rem;">Live CMP (10s)</span><br><b style="color: #00E676; font-size: 1.05rem;">₹{item["current_price"]:,.2f}</b> <span style="color: {chg_color}; font-size: 0.78rem;">{chg_arrow} {day_chg_pct:+.2f}%</span></div>'
+            f'<div><span style="color: #787b86; font-size: 0.75rem;">Buy Price</span><br><b style="color: #FFF; font-size: 1.05rem;">₹{item["buy_price"]:,.2f}</b><span style="color: #A0AEC0; font-size: 0.7rem;">{unit_lbl}</span></div>'
+            f'<div><span style="color: #787b86; font-size: 0.75rem;">Live CMP (10s)</span><br><b style="color: #00E676; font-size: 1.05rem;">₹{item["current_price"]:,.2f}</b><span style="color: #A0AEC0; font-size: 0.7rem;">{unit_lbl}</span> <span style="color: {chg_color}; font-size: 0.78rem;">{chg_arrow} {day_chg_pct:+.2f}%</span></div>'
             f'<div><span style="color: #787b86; font-size: 0.75rem;">Quantity</span><br><b style="color: #FFF; font-size: 1.05rem;">{item["qty"]}</b></div>'
             f'<div><span style="color: #787b86; font-size: 0.75rem;">Unrealized P&L</span><br><b style="color: {pnl_badge_color}; font-size: 1.05rem; background: {pnl_badge_bg}; padding: 2px 6px; border-radius: 4px;">{pnl_pct:+.2f}% (₹{pnl_val:+,.2f})</b></div>'
             f'<div><span style="color: #787b86; font-size: 0.75rem;">Stop Loss</span><br><b style="color: #FF5252; font-size: 1.05rem;">₹{item["stop_loss"]:,.2f}</b></div>'

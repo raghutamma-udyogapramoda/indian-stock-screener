@@ -5,11 +5,18 @@ Supports Nifty 50, Nifty 500, F&O Universe, and Custom/All Stocks.
 
 import os
 from pathlib import Path
-from typing import List
+from typing import List, Optional
+import time
 import pandas as pd
 import requests
+import yfinance as yf
 
 from config.settings import UNIVERSES_DIR
+
+_USDINR_CACHE = {
+    "rate": 95.5,
+    "timestamp": 0.0
+}
 
 # Reliable built-in seed list for Nifty 50
 NIFTY_50_SEED = [
@@ -285,3 +292,148 @@ class UniverseManager:
             return YFINANCE_TO_MCX[s]
         clean = s.replace(".NS", "").replace(".BO", "").replace("^", "")
         return clean
+
+    @staticmethod
+    def get_commodity_unit(symbol: str) -> str:
+        """Returns standard official Multi Commodity Exchange of India (MCX) contract quotation unit."""
+        clean = UniverseManager.to_clean_symbol(symbol)
+        units = {
+            "GOLD": "₹ / 10g",
+            "SILVER": "₹ / kg",
+            "CRUDEOIL": "₹ / bbl",
+            "NATURALGAS": "₹ / mmBtu",
+            "COPPER": "₹ / kg",
+            "ZINC": "₹ / kg",
+            "ALUMINIUM": "₹ / kg",
+        }
+        return units.get(clean, "MCX")
+
+    @staticmethod
+    def get_usdinr_rate() -> float:
+        """
+        Retrieves real-time USD/INR exchange rate with 5-minute memory caching.
+        Falls back to resilient default (95.5) if offline or network throttled.
+        """
+        now = time.time()
+        if now - _USDINR_CACHE["timestamp"] < 300:
+            return _USDINR_CACHE["rate"]
+        try:
+            tk = yf.Ticker("USDINR=X")
+            fi = tk.fast_info
+            p = getattr(fi, "last_price", None) or getattr(fi, "regular_market_price", None)
+            if p and p > 50:
+                _USDINR_CACHE["rate"] = float(p)
+                _USDINR_CACHE["timestamp"] = now
+                return float(p)
+        except Exception:
+            pass
+        return _USDINR_CACHE["rate"]
+
+    @staticmethod
+    def get_mcx_conversion_multiplier(symbol: str, raw_price: float, usdinr: Optional[float] = None) -> float:
+        """
+        Calculates exact mathematical multiplier to convert unadjusted international
+        futures (COMEX/NYMEX/LME) into authoritative Multi Commodity Exchange of India (MCX)
+        quotation units and INR (₹).
+
+        Contract specifications:
+          - GOLD (MCX: ₹ / 10g): COMEX GC=F ($/troy oz) * (10 / 31.1034768) * USDINR * 1.10 (customs duty + AIDC landed parity)
+          - SILVER (MCX: ₹ / kg): COMEX SI=F ($/troy oz) * (1000 / 31.1034768) * USDINR * 1.15 (import tariff landed parity)
+          - CRUDEOIL (MCX: ₹ / bbl): NYMEX CL=F ($/bbl) * USDINR
+          - NATURALGAS (MCX: ₹ / mmBtu): NYMEX NG=F ($/mmBtu) * USDINR
+          - COPPER (MCX: ₹ / kg): COMEX HG=F ($/lb) * 2.20462262 * USDINR
+          - ZINC (MCX: ₹ / kg): LME ZNC=F ($/MT) / 1000 * USDINR (or $/lb * 2.20462 * USDINR)
+          - ALUMINIUM (MCX: ₹ / kg): LME ALI=F ($/MT) / 1000 * USDINR (or $/lb * 2.20462 * USDINR)
+        """
+        clean = UniverseManager.to_clean_symbol(symbol)
+        if not UniverseManager.is_commodity(clean) or raw_price is None or raw_price <= 0:
+            return 1.0
+
+        if usdinr is None:
+            usdinr = UniverseManager.get_usdinr_rate()
+
+        if clean == "GOLD":
+            # If price > 20000, it's already in MCX INR per 10g
+            if raw_price > 20000:
+                return 1.0
+            # Standard COMEX GC=F is $/Troy Oz
+            return (10.0 / 31.1034768) * usdinr * 1.10
+
+        elif clean == "SILVER":
+            # If price > 20000, it's already in MCX INR per kg
+            if raw_price > 20000:
+                return 1.0
+            # COMEX SI=F is $/Troy Oz
+            if raw_price <= 500:
+                return (1000.0 / 31.1034768) * usdinr * 1.15
+            return 1.0
+
+        elif clean == "CRUDEOIL":
+            # If price > 1000, it's already in MCX INR per bbl
+            if raw_price > 1000:
+                return 1.0
+            # NYMEX CL=F is $/barrel
+            return usdinr
+
+        elif clean == "NATURALGAS":
+            # If price > 50, it's already in MCX INR per mmBtu
+            if raw_price > 50:
+                return 1.0
+            # NYMEX NG=F is $/mmBtu
+            return usdinr
+
+        elif clean == "COPPER":
+            # If price > 100, it's already in MCX INR per kg
+            if raw_price > 100:
+                return 1.0
+            # COMEX HG=F is $/lb (1 lb = 0.45359237 kg -> 1 kg = 2.20462262 lbs)
+            return 2.20462262 * usdinr
+
+        elif clean == "ZINC":
+            # If 50 < price < 500, it's already in MCX INR per kg
+            if 50 < raw_price < 500:
+                return 1.0
+            if raw_price >= 500:
+                # LME USD per metric ton -> kg
+                return (1.0 / 1000.0) * usdinr
+            # Quoted in $/lb
+            return 2.20462262 * usdinr if raw_price < 10 else usdinr
+
+        elif clean == "ALUMINIUM":
+            # If 50 < price < 500, it's already in MCX INR per kg
+            if 50 < raw_price < 500:
+                return 1.0
+            if raw_price >= 500:
+                # LME USD per metric ton -> kg
+                return (1.0 / 1000.0) * usdinr
+            # Quoted in $/lb
+            return 2.20462262 * usdinr if raw_price < 10 else usdinr
+
+        return 1.0
+
+    @staticmethod
+    def convert_ohlcv_to_mcx(symbol: str, df: pd.DataFrame) -> pd.DataFrame:
+        """
+        Converts OHLCV candlestick data of international commodity futures to Indian MCX INR.
+        Preserves 100% of candle shapes, volatility, technical indicator patterns, and wicks.
+        """
+        clean = UniverseManager.to_clean_symbol(symbol)
+        if not UniverseManager.is_commodity(clean) or df is None or df.empty:
+            return df
+
+        price_cols = [c for c in ['open', 'high', 'low', 'close'] if c in df.columns]
+        if not price_cols:
+            return df
+
+        df = df.copy()
+        valid_closes = df['close'].dropna()
+        if valid_closes.empty:
+            return df
+
+        last_close = float(valid_closes.iloc[-1])
+        multiplier = UniverseManager.get_mcx_conversion_multiplier(clean, last_close)
+        if abs(multiplier - 1.0) > 1e-4:
+            for col in price_cols:
+                df[col] = (df[col] * multiplier).round(2)
+        return df
+

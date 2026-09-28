@@ -16,7 +16,6 @@ import yfinance as yf
 from config.settings import BASE_DIR
 from core.indicators import enrich_with_indicators
 from core.universe import UniverseManager
-from providers.yfinance_provider import YahooFinanceProvider
 
 TRACKER_DATA_DIR = BASE_DIR / "data" / "tracker"
 TRACKER_DATA_DIR.mkdir(parents=True, exist_ok=True)
@@ -100,19 +99,17 @@ class PortfolioTracker:
                 day_high = getattr(fi, "day_high", None) or price
                 day_low = getattr(fi, "day_low", None) or price
 
-                # MCX Commodity INR adjustment if international ticker
+                # Authoritative MCX Commodity INR adjustment
                 if UniverseManager.is_commodity(clean) and price is not None:
-                    if clean == "GOLD" and price < 5000:
-                        mult = 90500.0 / 4200.0
-                        price = round(price * mult, 2)
-                        prev = round(prev * mult, 2)
-                        day_high = round(day_high * mult, 2)
-                        day_low = round(day_low * mult, 2)
-                    elif clean == "CRUDEOIL" and price < 150:
-                        price = round(price * 84.0, 2)
-                        prev = round(prev * 84.0, 2)
-                        day_high = round(day_high * 84.0, 2)
-                        day_low = round(day_low * 84.0, 2)
+                    mult = UniverseManager.get_mcx_conversion_multiplier(clean, float(price))
+                    if abs(mult - 1.0) > 1e-4:
+                        price = round(float(price) * mult, 2)
+                        if prev is not None:
+                            prev = round(float(prev) * mult, 2)
+                        if day_high is not None:
+                            day_high = round(float(day_high) * mult, 2)
+                        if day_low is not None:
+                            day_low = round(float(day_low) * mult, 2)
 
                 if price is not None and price > 0:
                     chg = round(price - prev, 2) if prev else 0.0
@@ -428,4 +425,5 @@ class PortfolioTracker:
             "day_high": live_quote.get("day_high", current_price) if live_quote else current_price,
             "day_low": live_quote.get("day_low", current_price) if live_quote else current_price,
             "last_checked_time": live_quote.get("timestamp", datetime.now().strftime("%I:%M:%S %p")) if live_quote else datetime.now().strftime("%I:%M:%S %p"),
+            "commodity_unit": UniverseManager.get_commodity_unit(sym) if UniverseManager.is_commodity(sym) else "",
         }
