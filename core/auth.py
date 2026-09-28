@@ -1,7 +1,7 @@
 """
 Authentication and Access Control Manager for Streamlit Application.
 Provides institutional-grade user authentication, password verification,
-and session management via Streamlit Secrets and environment variables.
+role-based access control (Admin vs Trader), and session management.
 """
 
 import hashlib
@@ -11,11 +11,21 @@ from typing import Dict, Optional
 import streamlit as st
 
 
-# Default fallback credentials for local testing if no secrets or env vars are configured
+# Default authorized users and credentials
 DEFAULT_USERS = {
     "admin": "admin@2026",
-    "trader": "nsemcx2026",
-    "raghavendra": "screener2026"
+    "guruteja": "guru@2026",
+    "raghavendra": "raghavendra@2026",
+    "naresh": "naresh@2026",
+    "trader": "nsemcx2026"
+}
+
+# Authorized Administrator Accounts
+ADMIN_USERS = {
+    "admin",
+    "guruteja",
+    "raghavendra",
+    "naresh"
 }
 
 
@@ -27,13 +37,14 @@ def _hash_password(password: str) -> str:
 def get_user_database() -> Dict[str, str]:
     """
     Loads authorized users from:
-    1. Streamlit Secrets (st.secrets["users"])
-    2. Environment variables (ADMIN_USERNAME / ADMIN_PASSWORD or APP_USERS)
-    3. Default built-in accounts (for local initial testing)
+    1. Built-in system accounts (DEFAULT_USERS)
+    2. Streamlit Secrets (st.secrets["users"])
+    3. Environment variables (ADMIN_USERNAME / ADMIN_PASSWORD or APP_USERS)
     """
-    users: Dict[str, str] = {}
+    # Start with built-in authorized users
+    users: Dict[str, str] = {u.lower(): p for u, p in DEFAULT_USERS.items()}
 
-    # 1. Check Streamlit Secrets
+    # 1. Check Streamlit Secrets (can add more users or override)
     try:
         if hasattr(st, "secrets") and "users" in st.secrets:
             for u, p in st.secrets["users"].items():
@@ -54,17 +65,13 @@ def get_user_database() -> Dict[str, str]:
                 u, p = pair.split(":", 1)
                 users[u.strip().lower()] = p.strip()
 
-    # 3. If no users configured anywhere, load default users
-    if not users:
-        users = {u.lower(): p for u, p in DEFAULT_USERS.items()}
-
     return users
 
 
 def verify_credentials(username: str, password_attempt: str) -> bool:
     """
     Verifies username and password against configured users.
-    Supports both plain text and SHA-256 hashed passwords in secrets.
+    Supports plain text and SHA-256 hashed passwords in secrets.
     """
     if not username or not password_attempt:
         return False
@@ -80,6 +87,10 @@ def verify_credentials(username: str, password_attempt: str) -> bool:
 
     # Match direct plaintext
     if stored_pass == attempt_pass:
+        return True
+
+    # Accept alternative legacy password for raghavendra
+    if u_clean == "raghavendra" and attempt_pass == "screener2026":
         return True
 
     # Match SHA-256 hash
@@ -99,6 +110,24 @@ def get_current_user() -> Optional[str]:
     return st.session_state.get("username")
 
 
+def is_admin(username: Optional[str] = None) -> bool:
+    """Returns True if the specified user (or current session user) has Admin role."""
+    target_user = username or get_current_user()
+    if not target_user:
+        return False
+    clean = target_user.strip().lower()
+    if clean in ADMIN_USERS:
+        return True
+    try:
+        if hasattr(st, "secrets") and "admins" in st.secrets:
+            secret_admins = [str(a).strip().lower() for a in st.secrets["admins"]]
+            if clean in secret_admins:
+                return True
+    except Exception:
+        pass
+    return False
+
+
 def logout_user():
     """Logs out the current user and clears session state."""
     st.session_state["authenticated"] = False
@@ -106,6 +135,8 @@ def logout_user():
     st.session_state.pop("cached_results", None)
     st.session_state.pop("symbols", None)
     st.session_state.pop("data_dict", None)
+    st.session_state.pop("prefill_user", None)
+    st.session_state.pop("prefill_pass", None)
     st.rerun()
 
 
@@ -121,9 +152,9 @@ def render_login_gate() -> bool:
     st.markdown("""
     <style>
     .login-container {
-        max-width: 480px;
-        margin: 2rem auto;
-        padding: 2.2rem;
+        max-width: 520px;
+        margin: 1.5rem auto 0 auto;
+        padding: 2rem 2rem 1.2rem 2rem;
         background: #131722;
         border: 1px solid #2a2e39;
         border-radius: 12px;
@@ -131,7 +162,7 @@ def render_login_gate() -> bool:
     }
     .login-header {
         text-align: center;
-        margin-bottom: 1.5rem;
+        margin-bottom: 1.2rem;
     }
     .login-title {
         font-size: 1.6rem;
@@ -145,62 +176,121 @@ def render_login_gate() -> bool:
     }
     .login-badge {
         display: inline-block;
-        background: rgba(41, 98, 255, 0.15);
-        color: #2962FF;
-        border: 1px solid #2962FF;
+        background: rgba(255, 215, 0, 0.15);
+        color: #FFD700;
+        border: 1px solid #FFD700;
         border-radius: 20px;
-        padding: 3px 12px;
+        padding: 3px 14px;
         font-size: 0.75rem;
-        font-weight: 600;
-        margin-bottom: 1rem;
+        font-weight: 700;
+        margin-bottom: 0.8rem;
+        letter-spacing: 0.5px;
     }
     </style>
     """, unsafe_allow_html=True)
 
-    col1, col2, col3 = st.columns([1, 1.8, 1])
+    col1, col2, col3 = st.columns([1, 2.2, 1])
     with col2:
         st.markdown("""
         <div class="login-container">
             <div class="login-header">
-                <span class="login-badge">🛡️ RESTRICTED ACCESS</span>
+                <span class="login-badge">🛡️ RESTRICTED ACCESS & ADMIN PORTAL</span>
                 <div class="login-title">🔐 Institutional Portal</div>
-                <div class="login-subtitle">Indian Equities & Derivatives Quantitative Screener</div>
+                <div class="login-subtitle">Indian Equities, Options & Commodities Quantitative Screener</div>
             </div>
         </div>
         """, unsafe_allow_html=True)
 
+        # Quick 1-Click Login Shortcut Buttons
+        st.markdown("<div style='font-size: 0.82rem; color: #A0AEC0; margin: 12px 0 6px 0;'><b>⚡ Quick Login (1-Click Fill):</b></div>", unsafe_allow_html=True)
+        q1, q2, q3 = st.columns(3)
+        if q1.button("👑 Guruteja", use_container_width=True, key="quick_guru"):
+            st.session_state["prefill_user"] = "guruteja"
+            st.session_state["prefill_pass"] = "guru@2026"
+            st.rerun()
+        if q2.button("👑 Raghavendra", use_container_width=True, key="quick_raghu"):
+            st.session_state["prefill_user"] = "raghavendra"
+            st.session_state["prefill_pass"] = "raghavendra@2026"
+            st.rerun()
+        if q3.button("👑 Naresh", use_container_width=True, key="quick_naresh"):
+            st.session_state["prefill_user"] = "naresh"
+            st.session_state["prefill_pass"] = "naresh@2026"
+            st.rerun()
+
+        prefill_u = st.session_state.get("prefill_user", "")
+        prefill_p = st.session_state.get("prefill_pass", "")
+
         with st.form("login_form", clear_on_submit=False):
             st.markdown("##### Sign in with authorized credentials")
-            username_in = st.text_input("Username", placeholder="Enter username", key="login_user_field")
-            password_in = st.text_input("Password", type="password", placeholder="Enter password", key="login_pass_field")
+            username_in = st.text_input("Username", value=prefill_u, placeholder="Enter username", key="login_user_input")
+            password_in = st.text_input("Password", value=prefill_p, type="password", placeholder="Enter password", key="login_pass_input")
             
             submit_btn = st.form_submit_button("🔓 Sign In to Dashboard", type="primary", use_container_width=True)
 
             if submit_btn:
                 if verify_credentials(username_in, password_in):
                     st.session_state["authenticated"] = True
-                    st.session_state["username"] = username_in.strip()
+                    st.session_state["username"] = username_in.strip().lower()
                     st.session_state["login_time"] = time.strftime("%Y-%m-%d %H:%M:%S")
-                    st.toast(f"✅ Welcome, {username_in}! Loading screener...", icon="🚀")
-                    time.sleep(0.5)
+                    is_adm = is_admin(username_in)
+                    role_str = "Administrator" if is_adm else "Trader"
+                    st.toast(f"✅ Welcome, {username_in.capitalize()} ({role_str})! Loading screener...", icon="🚀")
+                    time.sleep(0.4)
                     st.rerun()
                 else:
-                    st.error("❌ Invalid username or password. Please verify your credentials.")
+                    st.error("❌ Invalid username or password. Please verify your credentials from the list below.")
 
-        st.caption("🔒 Access restricted to authorized traders. Configured via Streamlit Secrets or Environment.")
-
-        # If running with default built-in credentials, display helpful helper banner for developer
-        db = get_user_database()
-        if "admin" in db and db["admin"] == DEFAULT_USERS["admin"]:
-            with st.expander("ℹ️ Initial Setup / Default Access Credentials"):
-                st.markdown("""
-                **Default Credentials (for initial setup & testing):**
-                - `admin` / `admin@2026`
-                - `raghavendra` / `screener2026`
-                - `trader` / `nsemcx2026`
-
-                *To configure custom private accounts, add `[users]` in `.streamlit/secrets.toml` or Streamlit Cloud Secrets settings.*
-                """)
+        # Display Authorized Passwords directly on the page
+        st.markdown("""
+        <div style="background: #1a1e29; border: 1px solid #2a2e39; border-radius: 10px; padding: 16px; margin-top: 14px; box-shadow: 0 4px 16px rgba(0,0,0,0.25);">
+            <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; border-bottom: 1px solid #2a2e39; padding-bottom: 8px;">
+                <span style="font-weight: 700; color: #FFD700; font-size: 0.92rem;">🔑 Authorized Users & Access Passwords</span>
+                <span style="background: rgba(255, 215, 0, 0.15); color: #FFD700; border: 1px solid #FFD700; border-radius: 10px; padding: 2px 8px; font-size: 0.7rem; font-weight: bold;">ADMIN ENABLED</span>
+            </div>
+            <table style="width: 100%; border-collapse: collapse; font-size: 0.83rem; color: #E2E8F0;">
+                <thead>
+                    <tr style="border-bottom: 1px solid #333947; color: #A0AEC0; text-align: left;">
+                        <th style="padding: 6px 8px;">Name</th>
+                        <th style="padding: 6px 8px;">Username</th>
+                        <th style="padding: 6px 8px;">Password</th>
+                        <th style="padding: 6px 8px;">Access Level</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr style="border-bottom: 1px solid #242936;">
+                        <td style="padding: 6px 8px; font-weight: 600; color: #FFFFFF;">Guruteja</td>
+                        <td style="padding: 6px 8px;"><code style="background:#0e1117; color:#64B5F6; padding: 2px 6px; border-radius: 4px;">guruteja</code></td>
+                        <td style="padding: 6px 8px;"><code style="background:#0e1117; color:#00E676; padding: 2px 6px; border-radius: 4px;">guru@2026</code></td>
+                        <td style="padding: 6px 8px;"><span style="color: #FFD700; font-weight: bold;">👑 Admin</span></td>
+                    </tr>
+                    <tr style="border-bottom: 1px solid #242936;">
+                        <td style="padding: 6px 8px; font-weight: 600; color: #FFFFFF;">Raghavendra</td>
+                        <td style="padding: 6px 8px;"><code style="background:#0e1117; color:#64B5F6; padding: 2px 6px; border-radius: 4px;">raghavendra</code></td>
+                        <td style="padding: 6px 8px;"><code style="background:#0e1117; color:#00E676; padding: 2px 6px; border-radius: 4px;">raghavendra@2026</code></td>
+                        <td style="padding: 6px 8px;"><span style="color: #FFD700; font-weight: bold;">👑 Admin</span></td>
+                    </tr>
+                    <tr style="border-bottom: 1px solid #242936;">
+                        <td style="padding: 6px 8px; font-weight: 600; color: #FFFFFF;">Naresh</td>
+                        <td style="padding: 6px 8px;"><code style="background:#0e1117; color:#64B5F6; padding: 2px 6px; border-radius: 4px;">naresh</code></td>
+                        <td style="padding: 6px 8px;"><code style="background:#0e1117; color:#00E676; padding: 2px 6px; border-radius: 4px;">naresh@2026</code></td>
+                        <td style="padding: 6px 8px;"><span style="color: #FFD700; font-weight: bold;">👑 Admin</span></td>
+                    </tr>
+                    <tr style="border-bottom: 1px solid #242936;">
+                        <td style="padding: 6px 8px; font-weight: 600; color: #FFFFFF;">System Admin</td>
+                        <td style="padding: 6px 8px;"><code style="background:#0e1117; color:#64B5F6; padding: 2px 6px; border-radius: 4px;">admin</code></td>
+                        <td style="padding: 6px 8px;"><code style="background:#0e1117; color:#00E676; padding: 2px 6px; border-radius: 4px;">admin@2026</code></td>
+                        <td style="padding: 6px 8px;"><span style="color: #FFD700; font-weight: bold;">👑 Admin</span></td>
+                    </tr>
+                    <tr>
+                        <td style="padding: 6px 8px; font-weight: 600; color: #FFFFFF;">Standard Trader</td>
+                        <td style="padding: 6px 8px;"><code style="background:#0e1117; color:#64B5F6; padding: 2px 6px; border-radius: 4px;">trader</code></td>
+                        <td style="padding: 6px 8px;"><code style="background:#0e1117; color:#00E676; padding: 2px 6px; border-radius: 4px;">nsemcx2026</code></td>
+                        <td style="padding: 6px 8px;"><span style="color: #A0AEC0;">👤 Trader</span></td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+        """, unsafe_allow_html=True)
 
     return False
 
@@ -211,17 +301,23 @@ def render_sidebar_user_badge():
         return
 
     user = get_current_user() or "Authorized User"
+    admin_status = is_admin(user)
+    role_label = "👑 ADMINISTRATOR" if admin_status else "👤 TRADER"
+    role_color = "#FFD700" if admin_status else "#00E676"
+    role_bg = "rgba(255, 215, 0, 0.15)" if admin_status else "rgba(0, 230, 118, 0.15)"
+
     st.sidebar.markdown(f"""
-    <div style="background: #1a1e29; border: 1px solid #2a2e39; border-radius: 8px; padding: 10px; margin-bottom: 12px;">
+    <div style="background: #1a1e29; border: 1px solid #2a2e39; border-radius: 8px; padding: 12px; margin-bottom: 12px;">
         <div style="display: flex; justify-content: space-between; align-items: center;">
             <div>
-                <div style="font-size: 0.75rem; color: #787b86;">LOGGED IN AS</div>
-                <div style="font-size: 0.95rem; font-weight: 700; color: #00E676;">👤 {user.upper()}</div>
+                <div style="font-size: 0.72rem; color: #787b86; letter-spacing: 0.5px;">LOGGED IN AS</div>
+                <div style="font-size: 1.05rem; font-weight: 800; color: #FFFFFF;">👤 {user.upper()}</div>
             </div>
-            <span style="background: rgba(0, 230, 118, 0.15); color: #00E676; border: 1px solid #00E676; border-radius: 12px; padding: 2px 8px; font-size: 0.7rem; font-weight: bold;">
-                ACTIVE
+            <span style="background: {role_bg}; color: {role_color}; border: 1px solid {role_color}; border-radius: 12px; padding: 3px 10px; font-size: 0.72rem; font-weight: bold;">
+                {role_label}
             </span>
         </div>
+        {"<div style='margin-top: 6px; font-size: 0.75rem; color: #FFD54F;'>⚡ Full Admin Privileges Active</div>" if admin_status else ""}
     </div>
     """, unsafe_allow_html=True)
 

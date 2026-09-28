@@ -27,7 +27,7 @@ from plotly.subplots import make_subplots
 import streamlit as st
 
 from ai.advisor import AIAdvisor
-from core.auth import render_login_gate, render_sidebar_user_badge, get_current_user
+from core.auth import render_login_gate, render_sidebar_user_badge, get_current_user, is_admin
 from core.indices import IndexDerivativesAnalyzer, INDEX_SPECS
 from core.tracker import PortfolioTracker
 from core.universe import UniverseManager
@@ -88,17 +88,42 @@ def plot_position_chart(symbol: str, df: pd.DataFrame, buy_price: float, stop_lo
 
 def render_item_tracker_view(current_user: str, data_dict: Dict[str, pd.DataFrame]):
     """Renders the comprehensive Live Item Tracker for the authenticated user."""
-    positions = PortfolioTracker.load_positions(current_user)
+    target_user = current_user
+    if is_admin(current_user):
+        admin_user_options = ["guruteja", "raghavendra", "naresh", "admin", "trader"]
+        if current_user.lower() not in admin_user_options:
+            admin_user_options.insert(0, current_user.lower())
+        curr_idx = admin_user_options.index(current_user.lower()) if current_user.lower() in admin_user_options else 0
+        
+        adm_box_c1, adm_box_c2 = st.columns([2.5, 1.5])
+        with adm_box_c1:
+            st.markdown(
+                '<div style="background: rgba(255, 215, 0, 0.08); border-left: 4px solid #FFD700; border-radius: 6px; padding: 8px 12px; margin-bottom: 12px; font-size: 0.85rem; color: #FFF8E1;">'
+                '<b>👑 Administrator Portfolio Management:</b> You have full admin access. Select any user below to inspect or manage their live portfolio.'
+                '</div>',
+                unsafe_allow_html=True
+            )
+        with adm_box_c2:
+            target_user = st.selectbox(
+                "Select Portfolio to View/Manage",
+                admin_user_options,
+                index=curr_idx,
+                format_func=lambda u: f"👑 {u.upper()} (Admin)" if is_admin(u) else f"👤 {u.upper()} (Trader)",
+                key=f"admin_portfolio_selector_{current_user}"
+            )
+
+    positions = PortfolioTracker.load_positions(target_user)
 
     h_col1, h_col2 = st.columns([3, 1])
     with h_col1:
-        st.subheader(f"📌 {current_user.upper()}'s Live Item Tracker & Portfolio Watch")
+        admin_tag = " <span style='color: #FFD700; font-size: 0.85rem; border: 1px solid #FFD700; padding: 2px 8px; border-radius: 12px;'>👑 ADMIN</span>" if is_admin(target_user) else ""
+        st.markdown(f"<h3 style='margin-bottom: 2px;'>📌 {target_user.upper()}'s Live Item Tracker & Portfolio Watch{admin_tag}</h3>", unsafe_allow_html=True)
         st.caption("Real-time position monitoring with intelligent BUY, HOLD, EXIT, and AVERAGE DOWN (Fake Fall / Shakeout Detection) signals.")
     with h_col2:
         if positions:
-            if st.button("🧹 Clear All Positions", type="secondary", use_container_width=True, key=f"clear_all_{current_user}", help="Remove all tracked items"):
-                PortfolioTracker.clear_all_positions(current_user)
-                st.toast("✅ Cleared all tracked positions.", icon="🧹")
+            if st.button("🧹 Clear All Positions", type="secondary", use_container_width=True, key=f"clear_all_{target_user}", help="Remove all tracked items"):
+                PortfolioTracker.clear_all_positions(target_user)
+                st.toast(f"✅ Cleared all tracked positions for {target_user.upper()}.", icon="🧹")
                 time.sleep(0.3)
                 st.rerun()
 
@@ -192,7 +217,7 @@ def render_item_tracker_view(current_user: str, data_dict: Dict[str, pd.DataFram
                     st.error("Please enter your actual Buy / Entry Price (greater than ₹0).")
                 else:
                     PortfolioTracker.add_position(
-                        username=current_user,
+                        username=target_user,
                         symbol=new_sym.strip(),
                         buy_price=float(new_buy),
                         qty=float(new_qty),
@@ -201,7 +226,7 @@ def render_item_tracker_view(current_user: str, data_dict: Dict[str, pd.DataFram
                         target=float(new_tgt) if new_tgt > 0 else None,
                         notes=new_notes
                     )
-                    st.toast(f"✅ Added {new_sym.upper()} to your tracker!", icon="📌")
+                    st.toast(f"✅ Added {new_sym.upper()} to {target_user.upper()}'s tracker!", icon="📌")
                     time.sleep(0.4)
                     st.rerun()
 
@@ -263,8 +288,8 @@ def render_item_tracker_view(current_user: str, data_dict: Dict[str, pd.DataFram
                 col_del, col_space = st.columns([1, 4])
                 with col_del:
                     if st.button("🗑️ Delete Position", key=f"del_pos_{pos_id}_{idx}", type="secondary"):
-                        PortfolioTracker.delete_position(current_user, pos_id)
-                        st.toast(f"Removed {item['symbol']} from your tracker.", icon="🗑️")
+                        PortfolioTracker.delete_position(target_user, pos_id)
+                        st.toast(f"Removed {item['symbol']} from {target_user.upper()}'s tracker.", icon="🗑️")
                         time.sleep(0.3)
                         st.rerun()
 
@@ -416,11 +441,18 @@ force_live_refresh = st.sidebar.checkbox(
 cache_ttl = st.sidebar.slider("Cache Freshness (Hours)", min_value=1, max_value=24, value=4)
 run_btn = st.sidebar.button("🔍 Run Live Market Screen", type="primary", use_container_width=True)
 
-if st.sidebar.button("🧹 Flush Cache & Reset Memory", use_container_width=True):
-    st.cache_data.clear()
-    st.session_state.clear()
-    st.toast("✅ App memory cache flushed! Re-running screeners...", icon="🧹")
-    st.rerun()
+if is_admin():
+    if st.sidebar.button("👑 Admin Flush Cache & Memory", use_container_width=True):
+        st.cache_data.clear()
+        st.session_state.clear()
+        st.toast("✅ Admin memory cache flushed! Re-running screeners...", icon="🧹")
+        st.rerun()
+else:
+    if st.sidebar.button("🧹 Flush Cache & Reset Memory", use_container_width=True):
+        st.cache_data.clear()
+        st.session_state.clear()
+        st.toast("✅ App memory cache flushed! Re-running screeners...", icon="🧹")
+        st.rerun()
 
 # ----------------- MAIN APP -----------------
 st.title("📈 Indian Equities & Commodities AI Screener")
@@ -1200,6 +1232,14 @@ if run_btn or "cached_results" in st.session_state:
     with tab_audit:
         st.subheader("🔍 API Raw Data & Indicator Proof (Admin Audit)")
         st.caption("Inspect exact timestamps, OHLCV candles, and computed mathematical formulas to cross-verify against NSE/MCX.")
+        
+        if is_admin():
+            st.markdown(
+                '<div style="background: rgba(255, 215, 0, 0.1); border-left: 4px solid #FFD700; border-radius: 6px; padding: 10px 14px; margin-bottom: 14px; color: #FFF8E1; font-size: 0.88rem;">'
+                '👑 <b>Administrator Audit Clearance:</b> You have full administrative access to review raw exchange candlesticks, diagnostic logs, and export system audit dumps.'
+                '</div>',
+                unsafe_allow_html=True
+            )
         
         # External API Health Diagnostic Panel
         st.markdown("### 🌐 External Data Feed & API Connectivity Health")
