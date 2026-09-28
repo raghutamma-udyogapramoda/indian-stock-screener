@@ -104,6 +104,204 @@ def plot_position_chart(symbol: str, df: pd.DataFrame, buy_price: float, stop_lo
     st.plotly_chart(fig, use_container_width=True)
 
 
+@st.fragment(run_every="10s")
+def render_live_tracked_positions_fragment(target_user: str, data_dict: Dict[str, pd.DataFrame]):
+    """
+    Reruns automatically every 10 seconds to check real-time stock prices
+    and dynamically update recommendations (BUY, HOLD, EXIT, AVERAGE DOWN).
+    """
+    positions = PortfolioTracker.load_positions(target_user)
+    
+    # Live Stream Status Strip
+    c_status, c_time, c_refresh = st.columns([2.5, 2.2, 1.3])
+    with c_status:
+        st.markdown(
+            '<div style="display: flex; align-items: center; gap: 8px; margin-top: 4px;">'
+            '<span style="height: 10px; width: 10px; background-color: #00E676; border-radius: 50%; display: inline-block; box-shadow: 0 0 10px #00E676;"></span>'
+            '<b style="color: #00E676; font-size: 0.88rem;">LIVE 10s STREAM ACTIVE</b>'
+            '<span style="color: #787b86; font-size: 0.8rem;">(auto-checking prices & recos)</span>'
+            '</div>',
+            unsafe_allow_html=True
+        )
+    with c_time:
+        now_time = time.strftime("%I:%M:%S %p")
+        st.markdown(f"<div style='text-align: right; color: #A0AEC0; font-size: 0.82rem; margin-top: 4px;'>⏱️ Last Checked: <b style='color: #FFFFFF;'>{now_time}</b></div>", unsafe_allow_html=True)
+    with c_refresh:
+        if st.button("🔄 Sync Now", use_container_width=True, type="secondary", key=f"btn_sync_now_{target_user}", help="Instantly pull latest exchange price"):
+            st.rerun(scope="fragment")
+
+    if not positions:
+        st.info("💡 You have no tracked positions yet. Use the form above to add stocks/options you bought, or click **'📌 Track this Position'** on any setup in the **AI Trade Plans** tab.")
+        return
+
+    # 1. Fetch instantaneous quotes for all tracked positions
+    needed_syms = []
+    for p in positions:
+        und = p.get("underlying") or PortfolioTracker.get_underlying_symbol(p.get("symbol", ""))
+        if und:
+            needed_syms.append(und)
+            needed_syms.append(p.get("symbol", ""))
+    
+    needed_syms = list(dict.fromkeys(needed_syms))
+    live_quotes = PortfolioTracker.fetch_live_quotes(needed_syms)
+
+    # 2. Fetch historical candle data for any symbols not in data_dict
+    active_data = dict(data_dict)
+    missing_history = [s for s in needed_syms if s not in active_data]
+    if missing_history:
+        try:
+            yf_fallback = YahooFinanceProvider(cache_ttl_hours=1.0)
+            fetched = yf_fallback.fetch_batch_ohlcv(missing_history, period="6mo", interval="1d", max_workers=5)
+            for s, df in fetched.items():
+                if df is not None and not df.empty:
+                    active_data[s] = df
+        except Exception:
+            pass
+
+    # 3. Dynamic Signal & Recommendation Shift Detection
+    reco_cache_key = f"prev_recos_{target_user}"
+    if reco_cache_key not in st.session_state:
+        st.session_state[reco_cache_key] = {}
+    prev_recos = st.session_state[reco_cache_key]
+
+    reco_shifts = []
+    evaluated = []
+
+    for p in positions:
+        und = p.get("underlying") or PortfolioTracker.get_underlying_symbol(p.get("symbol", ""))
+        df_for_pos = active_data.get(und)
+        if df_for_pos is None or (isinstance(df_for_pos, pd.DataFrame) and df_for_pos.empty):
+            df_for_pos = active_data.get(p.get("symbol", ""))
+
+        quote = live_quotes.get(und) or live_quotes.get(p.get("symbol", ""))
+        res = PortfolioTracker.evaluate_live_position(p, live_df=df_for_pos, live_quote=quote)
+        evaluated.append(res)
+
+        pos_id = p["id"]
+        cur_action = res["action_badge"]
+        if pos_id in prev_recos and prev_recos[pos_id] != cur_action:
+            reco_shifts.append({
+                "symbol": p["symbol"],
+                "old": prev_recos[pos_id],
+                "new": cur_action,
+                "price": res["current_price"],
+                "color": res["action_color"]
+            })
+        prev_recos[pos_id] = cur_action
+
+    # If any recommendation changed dynamically between ticks, show real-time alert banner!
+    if reco_shifts:
+        for shift in reco_shifts:
+            st.markdown(
+                f'<div style="background: rgba(255, 152, 0, 0.15); border-left: 5px solid {shift["color"]}; border-radius: 6px; padding: 10px 14px; margin: 10px 0; color: #FFFFFF; font-size: 0.9rem;">'
+                f'⚡ <b>Real-Time Signal Shift:</b> <b>{shift["symbol"]}</b> recommendation changed from <code>{shift["old"]}</code> ➔ <b style="color: {shift["color"]};">{shift["new"]}</b> at CMP ₹{shift["price"]:,.2f}!'
+                f'</div>',
+                unsafe_allow_html=True
+            )
+
+    # 4. Portfolio Summary KPIs
+    tot_invested = sum(r["invested_val"] for r in evaluated) if evaluated else 0.0
+    tot_current = sum(r["current_val"] for r in evaluated) if evaluated else 0.0
+    tot_pnl = tot_current - tot_invested
+    tot_pnl_pct = (tot_pnl / tot_invested * 100) if tot_invested > 0 else 0.0
+
+    kpi1, kpi2, kpi3, kpi4 = st.columns(4)
+    kpi1.metric("Total Portfolio Value", f"₹{tot_current:,.2f}")
+    kpi2.metric("Total Invested Capital", f"₹{tot_invested:,.2f}")
+    kpi3.metric(
+        "Total Unrealized P&L",
+        f"₹{tot_pnl:+,.2f} ({tot_pnl_pct:+.2f}%)",
+        delta=f"{tot_pnl_pct:+.2f}%" if tot_invested > 0 else "0.00%",
+        delta_color="normal" if tot_invested > 0 else "off"
+    )
+    kpi4.metric("Active Positions", f"{len(positions)} Tracked", delta=f"{len(evaluated)} Live")
+
+    # Action distribution summary
+    if evaluated:
+        n_avg = sum(1 for r in evaluated if r["action_type"] == "AVERAGE_DOWN")
+        n_hold = sum(1 for r in evaluated if "HOLD" in r["action_type"])
+        n_fake_rise = sum(1 for r in evaluated if r["action_type"] == "FAKE_RISE")
+        n_sl = sum(1 for r in evaluated if r["action_type"] == "EXIT")
+        n_tgt = sum(1 for r in evaluated if r["action_type"] == "TARGET_HIT")
+
+        st.markdown(
+            f'<div style="background: #131722; border: 1px solid #2a2e39; border-radius: 8px; padding: 10px 16px; margin: 12px 0 20px 0; font-size: 0.85rem;">'
+            f'<b>Live Decision Distribution:</b> '
+            f'<span style="color: #00E676; margin-right: 14px;">🟢 Average Down (Fake Fall): <b>{n_avg}</b></span> '
+            f'<span style="color: #64B5F6; margin-right: 14px;">🟢 Strong Hold: <b>{n_hold}</b></span> '
+            f'<span style="color: #FF9800; margin-right: 14px;">⚠️ Fake Rise Alert: <b>{n_fake_rise}</b></span> '
+            f'<span style="color: #FF5252; margin-right: 14px;">🛑 Exit (SL Broken): <b>{n_sl}</b></span> '
+            f'<span style="color: #FFD54F;">🎯 Target Hit: <b>{n_tgt}</b></span>'
+            f'</div>',
+            unsafe_allow_html=True
+        )
+
+    # 5. Position Cards
+    st.markdown("### 📋 Active Tracked Positions & Live Decision Engine")
+    for idx, item in enumerate(evaluated):
+        pos_id = item["id"]
+        action_type = item["action_type"]
+        badge_color = item["action_color"]
+        border_color = badge_color
+        bg_color = "#131722"
+
+        pnl_val = item["pnl_val"]
+        pnl_pct = item["pnl_pct"]
+        pnl_badge_color = "#00E676" if pnl_val >= 0 else "#FF5252"
+        pnl_badge_bg = "rgba(0, 230, 118, 0.15)" if pnl_val >= 0 else "rgba(255, 82, 82, 0.15)"
+
+        day_chg = item.get("day_change", 0.0)
+        day_chg_pct = item.get("day_change_pct", 0.0)
+        chg_arrow = "▲" if day_chg >= 0 else "▼"
+        chg_color = "#00E676" if day_chg >= 0 else "#FF5252"
+
+        # Callout card
+        card_html = (
+            f'<div style="background-color: {bg_color}; border-left: 6px solid {border_color}; border-radius: 10px; padding: 18px; margin-bottom: 12px; border-top: 1px solid #2a2e39; border-right: 1px solid #2a2e39; border-bottom: 1px solid #2a2e39; box-shadow: 0 4px 12px rgba(0,0,0,0.3);">'
+            f'<div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap;">'
+            f'<div>'
+            f'<span style="background-color: #2962FF; color: #FFF; padding: 2px 8px; border-radius: 4px; font-size: 0.75rem; font-weight: bold; margin-right: 8px;">{item["asset_type"]}</span>'
+            f'<span style="font-size: 1.35rem; font-weight: bold; color: #FFF;">{item["symbol"]}</span> '
+            f'<span style="color: #787b86; font-size: 0.85rem; margin-left: 8px;">Bought: {item["buy_date"]}</span>'
+            f'</div>'
+            f'<div style="text-align: right;">'
+            f'<span style="background-color: {badge_color}; color: #000; padding: 4px 12px; border-radius: 4px; font-weight: bold; font-size: 0.85rem;">{item["action_badge"]}</span>'
+            f'</div>'
+            f'</div>'
+            f'<div style="display: grid; grid-template-columns: repeat(6, 1fr); gap: 10px; background-color: #0e1117; padding: 12px; border-radius: 6px; margin: 14px 0 10px 0;">'
+            f'<div><span style="color: #787b86; font-size: 0.75rem;">Buy Price</span><br><b style="color: #FFF; font-size: 1.05rem;">₹{item["buy_price"]:,.2f}</b></div>'
+            f'<div><span style="color: #787b86; font-size: 0.75rem;">Live CMP (10s)</span><br><b style="color: #00E676; font-size: 1.05rem;">₹{item["current_price"]:,.2f}</b> <span style="color: {chg_color}; font-size: 0.78rem;">{chg_arrow} {day_chg_pct:+.2f}%</span></div>'
+            f'<div><span style="color: #787b86; font-size: 0.75rem;">Quantity</span><br><b style="color: #FFF; font-size: 1.05rem;">{item["qty"]}</b></div>'
+            f'<div><span style="color: #787b86; font-size: 0.75rem;">Unrealized P&L</span><br><b style="color: {pnl_badge_color}; font-size: 1.05rem; background: {pnl_badge_bg}; padding: 2px 6px; border-radius: 4px;">{pnl_pct:+.2f}% (₹{pnl_val:+,.2f})</b></div>'
+            f'<div><span style="color: #787b86; font-size: 0.75rem;">Stop Loss</span><br><b style="color: #FF5252; font-size: 1.05rem;">₹{item["stop_loss"]:,.2f}</b></div>'
+            f'<div><span style="color: #787b86; font-size: 0.75rem;">Target</span><br><b style="color: #64B5F6; font-size: 1.05rem;">₹{item["target"]:,.2f}</b></div>'
+            f'</div>'
+            f'<div style="background-color: #1a1e29; border-left: 4px solid {border_color}; border-radius: 6px; padding: 10px 14px; margin-top: 10px;">'
+            f'<div style="font-size: 0.88rem; color: #FFF; margin-bottom: 4px;"><b>🧠 Decision Rationale:</b> {item["rationale"]}</div>'
+            f'<div style="font-size: 0.88rem; color: #FFD54F;"><b>💡 Suggested Tactical Action:</b> {item["suggested_action"]}</div>'
+            f'</div>'
+            f'</div>'
+        )
+        st.markdown(card_html, unsafe_allow_html=True)
+
+        # Chart and Deletion expander
+        und = item.get("underlying") or PortfolioTracker.get_underlying_symbol(item["symbol"])
+        df_for_pos = active_data.get(und)
+        if df_for_pos is None or (isinstance(df_for_pos, pd.DataFrame) and df_for_pos.empty):
+            df_for_pos = active_data.get(item["symbol"])
+        with st.expander(f"📊 Chart & Position Controls for {item['symbol']}"):
+            if df_for_pos is not None and not df_for_pos.empty:
+                plot_position_chart(item['symbol'], df_for_pos, item['buy_price'], item['stop_loss'], item['target'])
+            
+            col_del, col_space = st.columns([1, 4])
+            with col_del:
+                if st.button("🗑️ Delete Position", key=f"del_pos_{pos_id}_{idx}", type="secondary"):
+                    PortfolioTracker.delete_position(target_user, pos_id)
+                    st.toast(f"Removed {item['symbol']} from {target_user.upper()}'s tracker.", icon="🗑️")
+                    time.sleep(0.3)
+                    st.rerun()
+
+
 def render_item_tracker_view(current_user: str, data_dict: Dict[str, pd.DataFrame]):
     """Renders the comprehensive Live Item Tracker for the authenticated user."""
     target_user = current_user
@@ -136,7 +334,7 @@ def render_item_tracker_view(current_user: str, data_dict: Dict[str, pd.DataFram
     with h_col1:
         admin_tag = " <span style='color: #FFD700; font-size: 0.85rem; border: 1px solid #FFD700; padding: 2px 8px; border-radius: 12px;'>👑 ADMIN</span>" if is_admin(target_user) else ""
         st.markdown(f"<h3 style='margin-bottom: 2px;'>📌 {target_user.upper()}'s Live Item Tracker & Portfolio Watch{admin_tag}</h3>", unsafe_allow_html=True)
-        st.caption("Real-time position monitoring with intelligent BUY, HOLD, EXIT, and AVERAGE DOWN (Fake Fall / Shakeout Detection) signals.")
+        st.caption("Real-time position monitoring with intelligent BUY, HOLD, EXIT, and AVERAGE DOWN (Fake Fall / Shakeout Detection) signals. Automatically checks live prices every 10 seconds.")
     with h_col2:
         if positions:
             if st.button("🧹 Clear All Positions", type="secondary", use_container_width=True, key=f"clear_all_{target_user}", help="Remove all tracked items"):
@@ -145,74 +343,7 @@ def render_item_tracker_view(current_user: str, data_dict: Dict[str, pd.DataFram
                 time.sleep(0.3)
                 st.rerun()
 
-    # 1. Fetch live data for any tracked positions not in data_dict
-    needed_syms = []
-    for p in positions:
-        und = p.get("underlying") or PortfolioTracker.get_underlying_symbol(p.get("symbol", ""))
-        if und and und not in data_dict:
-            needed_syms.append(und)
-    
-    active_data = dict(data_dict)
-    if needed_syms:
-        try:
-            yf_fallback = YahooFinanceProvider(cache_ttl_hours=1.0)
-            fetched = yf_fallback.fetch_batch_ohlcv(list(set(needed_syms)), period="6mo", interval="1d", max_workers=5)
-            for s, df in fetched.items():
-                if df is not None and not df.empty:
-                    active_data[s] = df
-        except Exception:
-            pass
-
-    # 2. Evaluate all positions
-    evaluated = []
-    for p in positions:
-        und = p.get("underlying") or PortfolioTracker.get_underlying_symbol(p.get("symbol", ""))
-        df_for_pos = active_data.get(und)
-        if df_for_pos is None or (isinstance(df_for_pos, pd.DataFrame) and df_for_pos.empty):
-            df_for_pos = active_data.get(p.get("symbol", ""))
-        res = PortfolioTracker.evaluate_live_position(p, df_for_pos)
-        evaluated.append(res)
-
-    # 3. Portfolio Summary KPIs
-    tot_invested = sum(r["invested_val"] for r in evaluated) if evaluated else 0.0
-    tot_current = sum(r["current_val"] for r in evaluated) if evaluated else 0.0
-    tot_pnl = tot_current - tot_invested
-    tot_pnl_pct = (tot_pnl / tot_invested * 100) if tot_invested > 0 else 0.0
-
-    kpi1, kpi2, kpi3, kpi4 = st.columns(4)
-    kpi1.metric("Total Portfolio Value", f"₹{tot_current:,.2f}")
-    kpi2.metric("Total Invested Capital", f"₹{tot_invested:,.2f}")
-    kpi3.metric(
-        "Total Unrealized P&L",
-        f"₹{tot_pnl:+,.2f} ({tot_pnl_pct:+.2f}%)",
-        delta=f"{tot_pnl_pct:+.2f}%" if tot_invested > 0 else "0.00%",
-        delta_color="normal" if tot_invested > 0 else "off"
-    )
-    kpi4.metric("Active Positions", f"{len(positions)} Tracked")
-
-    # Action distribution summary
-    if evaluated:
-        n_avg = sum(1 for r in evaluated if r["action_type"] == "AVERAGE_DOWN")
-        n_hold = sum(1 for r in evaluated if "HOLD" in r["action_type"])
-        n_fake_rise = sum(1 for r in evaluated if r["action_type"] == "FAKE_RISE")
-        n_sl = sum(1 for r in evaluated if r["action_type"] == "EXIT")
-        n_tgt = sum(1 for r in evaluated if r["action_type"] == "TARGET_HIT")
-
-        st.markdown(
-            f'<div style="background: #131722; border: 1px solid #2a2e39; border-radius: 8px; padding: 10px 16px; margin: 12px 0 20px 0; font-size: 0.85rem;">'
-            f'<b>Decision Distribution:</b> '
-            f'<span style="color: #00E676; margin-right: 14px;">🟢 Average Down (Fake Fall): <b>{n_avg}</b></span> '
-            f'<span style="color: #64B5F6; margin-right: 14px;">🟢 Strong Hold: <b>{n_hold}</b></span> '
-            f'<span style="color: #FF9800; margin-right: 14px;">⚠️ Fake Rise Alert: <b>{n_fake_rise}</b></span> '
-            f'<span style="color: #FF5252; margin-right: 14px;">🛑 Exit (SL Broken): <b>{n_sl}</b></span> '
-            f'<span style="color: #FFD54F;">🎯 Target Hit: <b>{n_tgt}</b></span>'
-            f'</div>',
-            unsafe_allow_html=True
-        )
-
-    st.markdown("---")
-
-    # 4. Form: Add Position Manually
+    # Form: Add Position Manually (Kept outside fragment so form typing is never interrupted by 10s auto-refresh)
     with st.expander("➕ Add Stock / Index / Option / Future to Tracker", expanded=(len(positions) == 0)):
         with st.form("manual_add_tracker_form", clear_on_submit=True):
             f_col1, f_col2, f_col3 = st.columns(3)
@@ -248,68 +379,10 @@ def render_item_tracker_view(current_user: str, data_dict: Dict[str, pd.DataFram
                     time.sleep(0.4)
                     st.rerun()
 
-    # 5. Position Cards
-    if not evaluated:
-        st.info("💡 You have no tracked positions yet. Use the form above to add stocks/options you bought, or click **'📌 Track this Position'** on any setup in the **AI Trade Plans** tab.")
-    else:
-        st.markdown("### 📋 Active Tracked Positions & Live Decision Engine")
-        for idx, item in enumerate(evaluated):
-            pos_id = item["id"]
-            action_type = item["action_type"]
-            badge_color = item["action_color"]
-            border_color = badge_color
-            bg_color = "#131722"
+    st.markdown("---")
 
-            pnl_val = item["pnl_val"]
-            pnl_pct = item["pnl_pct"]
-            pnl_badge_color = "#00E676" if pnl_val >= 0 else "#FF5252"
-            pnl_badge_bg = "rgba(0, 230, 118, 0.15)" if pnl_val >= 0 else "rgba(255, 82, 82, 0.15)"
-
-            # Callout card
-            card_html = (
-                f'<div style="background-color: {bg_color}; border-left: 6px solid {border_color}; border-radius: 10px; padding: 18px; margin-bottom: 12px; border-top: 1px solid #2a2e39; border-right: 1px solid #2a2e39; border-bottom: 1px solid #2a2e39; box-shadow: 0 4px 12px rgba(0,0,0,0.3);">'
-                f'<div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap;">'
-                f'<div>'
-                f'<span style="background-color: #2962FF; color: #FFF; padding: 2px 8px; border-radius: 4px; font-size: 0.75rem; font-weight: bold; margin-right: 8px;">{item["asset_type"]}</span>'
-                f'<span style="font-size: 1.35rem; font-weight: bold; color: #FFF;">{item["symbol"]}</span> '
-                f'<span style="color: #787b86; font-size: 0.85rem; margin-left: 8px;">Bought: {item["buy_date"]}</span>'
-                f'</div>'
-                f'<div style="text-align: right;">'
-                f'<span style="background-color: {badge_color}; color: #000; padding: 4px 12px; border-radius: 4px; font-weight: bold; font-size: 0.85rem;">{item["action_badge"]}</span>'
-                f'</div>'
-                f'</div>'
-                f'<div style="display: grid; grid-template-columns: repeat(6, 1fr); gap: 10px; background-color: #0e1117; padding: 12px; border-radius: 6px; margin: 14px 0 10px 0;">'
-                f'<div><span style="color: #787b86; font-size: 0.75rem;">Buy Price</span><br><b style="color: #FFF; font-size: 1.05rem;">₹{item["buy_price"]:,.2f}</b></div>'
-                f'<div><span style="color: #787b86; font-size: 0.75rem;">Live CMP</span><br><b style="color: #00E676; font-size: 1.05rem;">₹{item["current_price"]:,.2f}</b></div>'
-                f'<div><span style="color: #787b86; font-size: 0.75rem;">Quantity</span><br><b style="color: #FFF; font-size: 1.05rem;">{item["qty"]}</b></div>'
-                f'<div><span style="color: #787b86; font-size: 0.75rem;">Unrealized P&L</span><br><b style="color: {pnl_badge_color}; font-size: 1.05rem; background: {pnl_badge_bg}; padding: 2px 6px; border-radius: 4px;">{pnl_pct:+.2f}% (₹{pnl_val:+,.2f})</b></div>'
-                f'<div><span style="color: #787b86; font-size: 0.75rem;">Stop Loss</span><br><b style="color: #FF5252; font-size: 1.05rem;">₹{item["stop_loss"]:,.2f}</b></div>'
-                f'<div><span style="color: #787b86; font-size: 0.75rem;">Target</span><br><b style="color: #64B5F6; font-size: 1.05rem;">₹{item["target"]:,.2f}</b></div>'
-                f'</div>'
-                f'<div style="background-color: #1a1e29; border-left: 4px solid {border_color}; border-radius: 6px; padding: 10px 14px; margin-top: 10px;">'
-                f'<div style="font-size: 0.88rem; color: #FFF; margin-bottom: 4px;"><b>🧠 Decision Rationale:</b> {item["rationale"]}</div>'
-                f'<div style="font-size: 0.88rem; color: #FFD54F;"><b>💡 Suggested Tactical Action:</b> {item["suggested_action"]}</div>'
-                f'</div>'
-                f'</div>'
-            )
-            render_html(card_html)
-
-            # Chart and Deletion expander
-            und = item.get("underlying") or PortfolioTracker.get_underlying_symbol(item["symbol"])
-            df_for_pos = active_data.get(und)
-            if df_for_pos is None or (isinstance(df_for_pos, pd.DataFrame) and df_for_pos.empty):
-                df_for_pos = active_data.get(item["symbol"])
-            with st.expander(f"📊 Chart & Position Controls for {item['symbol']}"):
-                if df_for_pos is not None and not df_for_pos.empty:
-                    plot_position_chart(item['symbol'], df_for_pos, item['buy_price'], item['stop_loss'], item['target'])
-                
-                col_del, col_space = st.columns([1, 4])
-                with col_del:
-                    if st.button("🗑️ Delete Position", key=f"del_pos_{pos_id}_{idx}", type="secondary"):
-                        PortfolioTracker.delete_position(target_user, pos_id)
-                        st.toast(f"Removed {item['symbol']} from {target_user.upper()}'s tracker.", icon="🗑️")
-                        time.sleep(0.3)
-                        st.rerun()
+    # Render the 10-second auto-refreshing live positions fragment
+    render_live_tracked_positions_fragment(target_user=target_user, data_dict=data_dict)
 
 
 # Custom Styling

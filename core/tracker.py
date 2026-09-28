@@ -4,12 +4,14 @@ Persists user-specific positions to disk and provides live real-time analysis
 with intelligent BUY, HOLD, EXIT, and AVERAGE DOWN (Fake Fall / Dip Detection) signals.
 """
 
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 import json
 import os
 from pathlib import Path
 from typing import Dict, List, Optional
 import pandas as pd
+import yfinance as yf
 
 from config.settings import BASE_DIR
 from core.indicators import enrich_with_indicators
@@ -71,6 +73,75 @@ class PortfolioTracker:
             clean_first = first.replace(".NS", "").replace(".BO", "").replace("^", "")
             return clean_first
         return s
+
+    @classmethod
+    def fetch_live_quotes(cls, symbols: List[str]) -> Dict[str, dict]:
+        """
+        Ultra-fast parallel live quote fetcher designed for 10-second ticker refreshes.
+        Fetches instantaneous Last Traded Price (LTP/CMP), day high/low, and daily % change.
+        """
+        if not symbols:
+            return {}
+
+        quotes: Dict[str, dict] = {}
+        unique_syms = list(dict.fromkeys(symbols))
+
+        def _fetch_one(raw_sym: str):
+            clean = cls.get_underlying_symbol(raw_sym)
+            yf_sym = UniverseManager.to_yfinance_symbol(clean)
+            try:
+                ticker = yf.Ticker(yf_sym)
+                fi = ticker.fast_info
+                price = getattr(fi, "last_price", None)
+                if price is None or price <= 0:
+                    price = getattr(fi, "regular_market_price", None)
+
+                prev = getattr(fi, "previous_close", None) or price
+                day_high = getattr(fi, "day_high", None) or price
+                day_low = getattr(fi, "day_low", None) or price
+
+                # MCX Commodity INR adjustment if international ticker
+                if UniverseManager.is_commodity(clean) and price is not None:
+                    if clean == "GOLD" and price < 5000:
+                        mult = 90500.0 / 4200.0
+                        price = round(price * mult, 2)
+                        prev = round(prev * mult, 2)
+                        day_high = round(day_high * mult, 2)
+                        day_low = round(day_low * mult, 2)
+                    elif clean == "CRUDEOIL" and price < 150:
+                        price = round(price * 84.0, 2)
+                        prev = round(prev * 84.0, 2)
+                        day_high = round(day_high * 84.0, 2)
+                        day_low = round(day_low * 84.0, 2)
+
+                if price is not None and price > 0:
+                    chg = round(price - prev, 2) if prev else 0.0
+                    chg_pct = round((chg / prev * 100), 2) if prev and prev > 0 else 0.0
+                    return clean, raw_sym, {
+                        "symbol": clean,
+                        "raw_symbol": raw_sym,
+                        "price": round(float(price), 2),
+                        "prev_close": round(float(prev), 2) if prev else round(float(price), 2),
+                        "change": chg,
+                        "change_pct": chg_pct,
+                        "day_high": round(float(day_high), 2) if day_high else round(float(price), 2),
+                        "day_low": round(float(day_low), 2) if day_low else round(float(price), 2),
+                        "timestamp": datetime.now().strftime("%I:%M:%S %p"),
+                        "status": "LIVE"
+                    }
+            except Exception:
+                pass
+            return clean, raw_sym, None
+
+        max_workers = min(len(unique_syms), 8)
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            results = executor.map(_fetch_one, unique_syms)
+            for clean_s, raw_s, q in results:
+                if q:
+                    quotes[clean_s] = q
+                    quotes[raw_s] = q
+
+        return quotes
 
     @classmethod
     def add_position(
@@ -143,11 +214,17 @@ class PortfolioTracker:
         return False
 
     @classmethod
-    def evaluate_live_position(cls, pos: dict, live_df: Optional[pd.DataFrame] = None) -> dict:
+    def evaluate_live_position(
+        cls,
+        pos: dict,
+        live_df: Optional[pd.DataFrame] = None,
+        live_quote: Optional[dict] = None
+    ) -> dict:
         """
-        Takes a tracked position and current live candle data.
+        Takes a tracked position, historical candle data, and real-time live market quote.
         Performs deep quantitative evaluation:
-        - Calculates P&L (₹ and %)
+        - Incorporates real-time 10-second price ticks
+        - Calculates live P&L (₹ and %)
         - Analyzes for Fake Fall (Shakeout -> Average Down recommendation)
         - Analyzes for Fake Rise (Bull Trap -> Caution / Take Profit)
         - Generates clear action badges and comprehensive execution thesis.
@@ -171,11 +248,26 @@ class PortfolioTracker:
         lower_wick_pct = 0.0
         upper_wick_pct = 0.0
 
+        # Prioritize live ticker quote if available
+        if live_quote and live_quote.get("price") and float(live_quote["price"]) > 0:
+            current_price = float(live_quote["price"])
+            has_market_data = True
+
         if live_df is not None and not live_df.empty and len(live_df) >= 5:
             has_market_data = True
-            enriched = enrich_with_indicators(live_df.copy())
+            df_copy = live_df.copy()
+            if live_quote and live_quote.get("price") and float(live_quote["price"]) > 0:
+                last_idx = df_copy.index[-1]
+                df_copy.loc[last_idx, "close"] = current_price
+                if current_price > df_copy.loc[last_idx, "high"]:
+                    df_copy.loc[last_idx, "high"] = current_price
+                if current_price < df_copy.loc[last_idx, "low"]:
+                    df_copy.loc[last_idx, "low"] = current_price
+
+            enriched = enrich_with_indicators(df_copy)
             last = enriched.iloc[-1]
-            current_price = float(last["close"])
+            if not (live_quote and live_quote.get("price")):
+                current_price = float(last["close"])
             rsi = float(last.get("rsi_14", 50.0))
             rvol = float(last.get("rvol_20", 1.0))
             clv = float(last.get("clv", 0.5))
@@ -187,12 +279,12 @@ class PortfolioTracker:
             high = float(last["high"])
             low = float(last["low"])
             op = float(last["open"])
-            cl = float(last["close"])
+            cl = current_price
             candle_range = max(high - low, 0.001)
             lower_wick = min(op, cl) - low
             upper_wick = high - max(op, cl)
-            lower_wick_pct = lower_wick / candle_range
-            upper_wick_pct = upper_wick / candle_range
+            lower_wick_pct = max(0.0, lower_wick / candle_range)
+            upper_wick_pct = max(0.0, upper_wick / candle_range)
 
         # 2. P&L Calculations
         is_put = "PE" in asset_type or "PUT" in asset_type
@@ -235,9 +327,11 @@ class PortfolioTracker:
             # 3. RSI bounce above panic territory (RSI > 34)
             # 4. SL not catastrophically breached (price within 2.5% of SL or above 50 EMA)
             is_fake_fall = (
+                not sl_breached and
                 (rvol < 0.88 or lower_wick_pct >= 0.32 or clv >= 0.45) and
-                rsi >= 32.0 and
-                (not sl_breached or current_price >= sl * 0.985)
+                rsi >= 32.0
+            ) or (
+                sl_breached and lower_wick_pct >= 0.45 and current_price >= sl * 0.985
             )
 
             if is_fake_fall:
@@ -329,4 +423,9 @@ class PortfolioTracker:
             "action_color": action_color,
             "rationale": rationale,
             "suggested_action": suggested_action,
+            "day_change": live_quote.get("change", 0.0) if live_quote else 0.0,
+            "day_change_pct": live_quote.get("change_pct", 0.0) if live_quote else 0.0,
+            "day_high": live_quote.get("day_high", current_price) if live_quote else current_price,
+            "day_low": live_quote.get("day_low", current_price) if live_quote else current_price,
+            "last_checked_time": live_quote.get("timestamp", datetime.now().strftime("%I:%M:%S %p")) if live_quote else datetime.now().strftime("%I:%M:%S %p"),
         }
