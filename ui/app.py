@@ -47,6 +47,7 @@ except Exception:
 
 from ai.advisor import AIAdvisor
 from core.indices import IndexDerivativesAnalyzer, INDEX_SPECS
+from core.macro import MacroMarketEngine
 from core.tracker import PortfolioTracker
 from core.universe import UniverseManager
 from core.indicators import enrich_with_indicators
@@ -57,6 +58,7 @@ from providers.yfinance_provider import YahooFinanceProvider
 from screeners.breakdown import BreakdownScreener
 from screeners.breakout import BreakoutScreener
 from screeners.btst import BTSTScreener
+from screeners.dip_leaders import DipLeaderScreener
 from screeners.intraday import IntradayScreener
 from screeners.options_fno import OptionsScreener
 from screeners.swing import SwingScreener
@@ -507,6 +509,7 @@ strategy_choice = st.sidebar.selectbox(
     "Strategy Filter",
     [
         "All Strategies",
+        "First-to-Recover Dip Leaders",
         "Breakout (Multi-Week & 52W)",
         "Breakdown (Short & Distribution)",
         "Swing (Pullback & Value)",
@@ -587,11 +590,12 @@ def execute_screening(u_name, custom_list, strat, top_limit, prov_mode, b_key=""
         provider = YahooFinanceProvider(cache_ttl_hours=cache_ttl)
         data = provider.fetch_batch_ohlcv(symbols, period="1y", interval="1d", max_workers=15, use_cache=not bypass_cache)
     
-    # 3. Always compute Indian Market Indices Derivatives Hub
-    idx_symbols = ["NIFTY", "BANKNIFTY", "SENSEX", "MIDCPNIFTY", "NIFTYIT"]
+    # 3. Always compute Indian Market Indices Derivatives Hub & Global Macro Regime
+    idx_symbols = ["NIFTY", "BANKNIFTY", "SENSEX", "MIDCPNIFTY", "NIFTYIT", "CRUDEOIL", "GOLD"]
     yf_idx_prov = YahooFinanceProvider(cache_ttl_hours=cache_ttl)
     idx_raw = yf_idx_prov.fetch_batch_ohlcv(idx_symbols, period="6mo", interval="1d", max_workers=5, use_cache=not bypass_cache)
     index_results = IndexDerivativesAnalyzer.analyze_batch(idx_raw)
+    macro_context = MacroMarketEngine.analyze_macro_regime(idx_raw)
 
     # 4. Extract data health telemetry from providers
     p_health = provider.get_health_status() if hasattr(provider, "get_health_status") else {}
@@ -629,8 +633,10 @@ def execute_screening(u_name, custom_list, strat, top_limit, prov_mode, b_key=""
         "is_static_mode": is_static
     }
 
-    # 5. Screen Equities with Benchmark Context (Sector Tailwind & Panic-Day Behavior)
+    # 5. Screen Equities with Benchmark Context & First-to-Recover Dip Leaders
     results = {}
+    if strat in ["All Strategies", "First-to-Recover Dip Leaders"]:
+        results["DIP_LEADER"] = DipLeaderScreener().screen_batch(data, top_n=top_limit, benchmark_data=idx_raw)
     if strat in ["All Strategies", "Breakout (Multi-Week & 52W)"]:
         results["BREAKOUT"] = BreakoutScreener().screen_batch(data, top_n=top_limit, benchmark_data=idx_raw)
     if strat in ["All Strategies", "Breakdown (Short & Distribution)"]:
@@ -649,13 +655,13 @@ def execute_screening(u_name, custom_list, strat, top_limit, prov_mode, b_key=""
         results["OPTIONS_PE"] = OptionsScreener(option_target="PE").screen_batch(data, top_n=top_limit, benchmark_data=idx_raw)
 
     elapsed = time.time() - t_start
-    return symbols, data, results, index_results, elapsed, data_health
+    return symbols, data, results, index_results, elapsed, data_health, macro_context
 
 
 if run_btn or "cached_results" in st.session_state:
     if run_btn:
-        with st.spinner("Syncing candles & computing vectorized indicators..."):
-            symbols, data_dict, results, index_results, elapsed, data_health = execute_screening(
+        with st.spinner("Syncing candles, macro indicators & computing vectorized screeners..."):
+            symbols, data_dict, results, index_results, elapsed, data_health, macro_context = execute_screening(
                 universe_choice,
                 custom_tickers,
                 strategy_choice,
@@ -672,12 +678,17 @@ if run_btn or "cached_results" in st.session_state:
             st.session_state["index_results"] = index_results
             st.session_state["elapsed"] = elapsed
             st.session_state["data_health"] = data_health
+            st.session_state["macro_context"] = macro_context
 
     symbols = st.session_state["symbols"]
     data_dict = st.session_state["data_dict"]
     results = st.session_state["cached_results"]
     index_results = st.session_state.get("index_results", [])
     elapsed = st.session_state["elapsed"]
+    macro_context = st.session_state.get("macro_context")
+    if not macro_context or not isinstance(macro_context, dict):
+        macro_context = MacroMarketEngine.analyze_macro_regime()
+        st.session_state["macro_context"] = macro_context
     data_health = st.session_state.get("data_health", {
         "is_latest": True,
         "api_call_failed": False,
@@ -798,8 +809,9 @@ if run_btn or "cached_results" in st.session_state:
 
     st.markdown("---")
 
-    tab_indices, tab_ai, tab_screeners, tab_tracker, tab_charts, tab_docs, tab_audit = st.tabs([
-        "🏛️ Indices Hub",
+    tab_indices, tab_dipleaders, tab_ai, tab_screeners, tab_tracker, tab_charts, tab_docs, tab_audit = st.tabs([
+        "🏛️ Indices & Macros",
+        "🚀 First-to-Recover Dip Leaders",
         "🤖 AI Trade Plans",
         "📊 Strategy Shortlists",
         "📌 Live Item Tracker",
@@ -811,6 +823,29 @@ if run_btn or "cached_results" in st.session_state:
     with tab_indices:
         st.subheader("🏛️ Indian Market & Sectoral Indices Derivatives Hub")
         st.caption("Quantitative Futures signals (Buy / Sell / Hold), Option Strategies (CE/PE/Spreads), and Profitability Ranking for NIFTY 50, BANK NIFTY, SENSEX, MIDCAP NIFTY, and Sectoral Indices.")
+
+        # Broader Market & Macro Cross-Asset Pulse
+        m_nifty = macro_context.get("nifty_summary", {})
+        m_crude = macro_context.get("crude_summary", {})
+        m_vix = macro_context.get("vix_summary", {})
+        m_usdinr = macro_context.get("usdinr_summary", {})
+
+        with st.container():
+            st.markdown("#### 🌍 Broader Market & Macro Cross-Asset Pulse")
+            mc1, mc2, mc3, mc4 = st.columns(4)
+            with mc1:
+                n_chg = m_nifty.get("change_pct", 0.0)
+                st.metric("NIFTY 50", f"₹{m_nifty.get('close', 22600.0):,.1f}", delta=f"{n_chg:+.2f}%", delta_color="normal" if n_chg >= 0 else "inverse")
+            with mc2:
+                c_price = m_crude.get("price_usd", 94.0)
+                st.metric("Crude Oil", f"${c_price:.2f}/bbl", delta=f"{m_crude.get('change_pct', 0.0):+.2f}%", delta_color="inverse" if c_price > 85 else "normal")
+            with mc3:
+                u_val = m_usdinr.get("rate", 96.0)
+                st.metric("USD / INR", f"₹{u_val:.2f}", delta="Exporter Tailwind" if u_val >= 83.5 else "Neutral", delta_color="normal")
+            with mc4:
+                v_val = m_vix.get("level", 14.0)
+                st.metric("India VIX", f"{v_val:.2f}", delta=m_vix.get('regime', 'NORMAL').replace('_', ' '), delta_color="inverse" if v_val > 18 else "normal")
+            st.markdown(f"<div style='background-color: #1e293b; border-left: 4px solid #38BDF8; padding: 6px 12px; border-radius: 4px; font-size: 0.84rem; color: #E2E8F0; margin-bottom: 16px;'><b>Macro Environment:</b> {macro_context.get('macro_regime_badge', '🟢 RISK-ON')} | <b>Playbook:</b> {macro_context.get('trading_playbook', 'Trade quality setups.')}</div>", unsafe_allow_html=True)
 
         if not is_live:
             st.warning(f"⚠️ **Notice on Index Pricing:** External market feed status is **Not Latest**. All index levels, futures signals, and action triggers are calculated from cached session data ({data_health.get('latest_data_date', 'prior session')}).")
@@ -1007,6 +1042,282 @@ if run_btn or "cached_results" in st.session_state:
                         for r in idx["technical_reasons"]:
                             st.write(f"• {r}")
 
+    with tab_dipleaders:
+        st.subheader("🚀 First-to-Recover Dip Leaders (The Coiled Spring Strategy)")
+        st.caption("Quantitative detection of Stage-2 market leaders that pulled back alongside broader market corrections on low/drying volume. Backed by institutional accumulation and moving average defense, these resilient stocks are primed to rebound first and fastest when NIFTY/BANKNIFTY turns up.")
+
+        # 1. Real-Time Macro Market & Commodity Cross-Asset Indicator Ribbon
+        m_nifty = macro_context.get("nifty_summary", {})
+        m_crude = macro_context.get("crude_summary", {})
+        m_vix = macro_context.get("vix_summary", {})
+        m_usdinr = macro_context.get("usdinr_summary", {})
+
+        m_col1, m_col2, m_col3, m_col4 = st.columns(4)
+        with m_col1:
+            n_chg = m_nifty.get("change_pct", 0.0)
+            st.metric(
+                "NIFTY 50 (Benchmark)",
+                f"₹{m_nifty.get('close', 22600.0):,.1f}",
+                delta=f"{n_chg:+.2f}% ({m_nifty.get('trend', 'BULLISH')})",
+                delta_color="normal" if n_chg >= 0 else "inverse"
+            )
+            st.caption(f"RSI: **{m_nifty.get('rsi', 50.0)}** | Trend: **{m_nifty.get('trend', 'BULLISH')}**")
+
+        with m_col2:
+            c_usd = m_crude.get("price_usd", 94.0)
+            c_chg = m_crude.get("change_pct", 0.0)
+            c_mcx = m_crude.get("price_mcx_inr", 0.0)
+            c_lbl = f"${c_usd:.2f}/bbl"
+            if c_mcx > 0:
+                c_lbl += f" (₹{c_mcx:,.0f} MCX)"
+            st.metric(
+                "Crude Oil (Macro Input)",
+                c_lbl,
+                delta=f"{c_chg:+.2f}% ({m_crude.get('trend', 'NEUTRAL')})",
+                delta_color="inverse" if c_usd > 85 else "normal"
+            )
+            st.caption(f"Consumers: **{m_crude.get('impact_consumers', 'NEUTRAL')}** | Upstream: **{m_crude.get('impact_upstream', 'NEUTRAL')}**")
+
+        with m_col3:
+            u_rate = m_usdinr.get("rate", 96.0)
+            st.metric(
+                "USD/INR (Currency)",
+                f"₹{u_rate:.2f} / $",
+                delta="Exporter Tailwind" if u_rate >= 83.5 else "Stable",
+                delta_color="normal"
+            )
+            st.caption("IT & Pharma Exporter Revenue Tailwind: **POSITIVE**")
+
+        with m_col4:
+            v_lvl = m_vix.get("level", 14.0)
+            v_regime = m_vix.get("regime", "NORMAL_VOLATILITY")
+            st.metric(
+                "India VIX (Risk Gauge)",
+                f"{v_lvl:.2f}",
+                delta=v_regime.replace("_", " "),
+                delta_color="inverse" if v_lvl > 18 else "normal"
+            )
+            st.caption(f"Market Volatility Risk: **{m_vix.get('risk_level', 'MODERATE')}**")
+
+        # Macro Regime Status Banner
+        regime_badge = macro_context.get("macro_regime_badge", "🟢 RISK-ON / MACRO TAILWIND")
+        playbook = macro_context.get("trading_playbook", "Trade breakouts and dip leaders with full conviction.")
+        m_score = macro_context.get("macro_score", 40)
+        
+        banner_bg = "linear-gradient(90deg, #064e3b 0%, #047857 100%)" if "RISK-ON" in regime_badge or "DIP" in regime_badge else ("linear-gradient(90deg, #78350f 0%, #b45309 100%)" if "CAUTIOUS" in regime_badge else "linear-gradient(90deg, #450a0a 0%, #7f1d1d 100%)")
+        banner_border = "#10B981" if "RISK-ON" in regime_badge or "DIP" in regime_badge else ("#F59E0B" if "CAUTIOUS" in regime_badge else "#EF4444")
+        
+        macro_html = (
+            f'<div style="background: {banner_bg}; border: 1px solid {banner_border}; border-radius: 8px; padding: 14px 20px; margin: 12px 0 20px 0; box-shadow: 0 4px 12px rgba(0,0,0,0.3);">'
+            f'<div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px;">'
+            f'<div>'
+            f'<span style="background-color: {banner_border}; color: #000; font-weight: 800; padding: 3px 10px; border-radius: 4px; font-size: 0.8rem; letter-spacing: 0.5px;">MACRO REGIME AUDIT</span>'
+            f'<h3 style="margin: 6px 0 2px 0; color: #FFF; font-size: 1.3rem;">{regime_badge} <span style="font-size: 1rem; color: #CBD5E0;">(Macro Score: {m_score:+d}/100)</span></h3>'
+            f'<div style="color: #F1F5F9; font-size: 0.9rem; line-height: 1.4;"><b>Institutional Playbook:</b> {playbook}</div>'
+            f'</div>'
+            f'</div>'
+            f'</div>'
+        )
+        render_html(macro_html)
+
+        # 2. Educational Philosophy Expander
+        with st.expander("💡 The Quantitative Coiled Spring Philosophy — How We Identify First-to-Recover Stocks", expanded=False):
+            st.markdown(r"""
+            ### 🎯 Why Do These Specific Stocks Recover First & Fastest?
+            When broader markets (NIFTY 50 / BANK NIFTY) face selling waves or macro panics (e.g., crude spikes or geopolitical fears), retail traders panic and sell everything indiscriminately.
+            However, **true market leaders** are characterized by five rigorous quantitative hallmarks:
+
+            1. **Stage-2 Structural Dominance**:
+               The stock is in an established primary uptrend ($\text{Price} > \text{SMA}_{200}$ and $\text{EMA}_{20} > \text{EMA}_{50}$). It was leading before the dip and will lead after.
+            2. **Panic-Day Resilience & Dip Alpha**:
+               During sessions where NIFTY tumbled $\le -0.75\%$, these stocks showed positive relative strength ($\text{Stock Return} - \text{NIFTY Return} \ge +1.0\%$) or even closed green. Institutional hands actively soaked up retail panic supply.
+            3. **High Up-Beta (Rebound Elasticity)**:
+               $$\text{Up-Beta} = \frac{\text{Mean}(\text{Stock Return} \mid \text{NIFTY Return} > 0)}{\text{Mean}(\text{NIFTY Return} \mid \text{NIFTY Return} > 0)}$$
+               Stocks with Up-Beta $\ge 1.25\text{x}$ act like coiled springs. The moment NIFTY gains $+0.8\%$, these leaders explode $+2.0\%$ to $+4.5\%$.
+            4. **Volume Exhaustion on Pullbacks (Dry Supply)**:
+               While price pulls back, trading volume **dries up** ($\text{RVol}_{20d} < 1.10\text{x}$). Smart money is **not** selling; only weak retail liquidity is trickling out.
+            5. **Dynamic Floor Defense with Lower Wicks**:
+               Price pulls back directly into key institutional floors (20 EMA, 50 EMA, or 50% breakout candle body midpoint) and leaves a prominent lower wick ($\ge 25\%$ of candle range), showing buyer absorption at the floor.
+            """)
+
+        # 3. Dip Leader Candidates Grid
+        dip_candidates = results.get("DIP_LEADER", [])
+        if not dip_candidates:
+            st.info("ℹ️ **No Dip Leader candidates detected in the current universe selection.** This usually occurs when the selected universe is in a clean parabolic breakout or when stocks have not recently dipped to test their 20/50 EMA support floors. Try switching the Universe filter to **Nifty 50** or **Custom** with `SUNPHARMA, CIPLA, DIVISLAB, HDFCBANK, RELIANCE` and rerun the screen.")
+        else:
+            st.markdown(f"### 💎 Identified First-to-Recover Leaders ({len(dip_candidates)} Setups)")
+            
+            d_cols = st.columns(2)
+            for d_idx, c in enumerate(dip_candidates):
+                col = d_cols[d_idx % 2]
+                with col:
+                    d_sym = c.get("symbol", "")
+                    d_chg = c.get("change_pct", 0.0)
+                    chg_color = "#00E676" if d_chg >= 0 else "#FF5252"
+                    
+                    v_badge = c.get("recovery_velocity_badge", "🚀 COILED SPRING (HIGH BOUNCE VELOCITY)")
+                    v_border = "#00E676" if "COILED" in v_badge else "#64B5F6"
+                    
+                    # Macro alignment
+                    macro_align_html = ""
+                    if c.get("macro_alignment"):
+                        macro_align_html = f'<div style="background-color: #0e2a3b; border-left: 3px solid #38BDF8; padding: 4px 10px; border-radius: 4px; font-size: 0.8rem; color: #BAE6FD; margin: 6px 0;"><b>🌊 Macro Alignment:</b> {c.get("macro_alignment")}</div>'
+                    
+                    # Card HTML
+                    card_html = (
+                        f'<div style="background-color: #1a1e24; border-radius: 10px; padding: 18px; margin-bottom: 16px; border-left: 6px solid {v_border}; box-shadow: 0 4px 10px rgba(0,0,0,0.35);">'
+                        f'<div style="display: flex; justify-content: space-between; align-items: center;">'
+                        f'<div>'
+                        f'<h3 style="margin: 0; color: #FFF; font-size: 1.35rem;">{d_sym} <span style="font-size: 0.85rem; color: #94A3B8;">({c.get("sector", "Broad Market")})</span></h3>'
+                        f'<span style="font-size: 0.85rem; color: #CBD5E0;">LTP: <b style="color: #FFF;">₹{c.get("close", 0.0):,.2f}</b> (<b style="color: {chg_color};">{d_chg:+.2f}%</b>)</span>'
+                        f'</div>'
+                        f'<span style="background-color: #064e3b; color: #34D399; border: 1px solid #10B981; padding: 4px 10px; border-radius: 4px; font-weight: bold; font-size: 0.8rem;">Score: {c.get("score")}/100</span>'
+                        f'</div>'
+                        f'<div style="margin: 8px 0 6px 0;">'
+                        f'<span style="background-color: #1e293b; color: #F1F5F9; border-left: 3px solid {v_border}; padding: 3px 8px; border-radius: 3px; font-size: 0.8rem; font-weight: 600;">{v_badge}</span>'
+                        f'</div>'
+                        f'{macro_align_html}'
+                        f'<div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; background-color: #0e1117; padding: 10px; border-radius: 6px; margin: 10px 0 8px 0;">'
+                        f'<div><span style="color: #888; font-size: 0.72rem;">Dip Alpha vs Nifty</span><br><b style="color: #00E676; font-size: 1.0rem;">+{c.get("dip_alpha_pct", 0.0):.2f}%</b></div>'
+                        f'<div><span style="color: #888; font-size: 0.72rem;">Up-Beta (Bounce)</span><br><b style="color: #FFD54F; font-size: 1.0rem;">{c.get("bounce_velocity_up_beta", 1.0):.2f}x</b></div>'
+                        f'<div><span style="color: #888; font-size: 0.72rem;">Pullback Volume</span><br><b style="color: #64B5F6; font-size: 1.0rem;">{c.get("pullback_rvol", 0.8):.2f}x (Dry)</b></div>'
+                        f'<div><span style="color: #888; font-size: 0.72rem;">Support Floor Held</span><br><b style="color: #FFF; font-size: 0.88rem;">{c.get("support_floor_desc", "20 EMA")}</b></div>'
+                        f'<div><span style="color: #888; font-size: 0.72rem;">Buyer Wick Defense</span><br><b style="color: #A7F3D0; font-size: 0.88rem;">{c.get("lower_wick_pct", 0.0):.1f}% Wick</b></div>'
+                        f'<div><span style="color: #888; font-size: 0.72rem;">MRS vs Nifty (50)</span><br><b style="color: #F472B6; font-size: 0.88rem;">{c.get("mrs", 0.0):+.2f}%</b></div>'
+                        f'</div>'
+                        f'<div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; background-color: #131922; padding: 10px; border-radius: 6px; margin-bottom: 8px;">'
+                        f'<div><span style="color: #888; font-size: 0.72rem;">Springboard Entry</span><br><b style="color: #FFF; font-size: 0.95rem;">₹{c.get("springboard_entry_zone", 0.0):,.1f}</b></div>'
+                        f'<div><span style="color: #888; font-size: 0.72rem;">Invalidation SL</span><br><b style="color: #FF5252; font-size: 0.95rem;">₹{c.get("invalidation_sl", 0.0):,.1f}</b></div>'
+                        f'<div><span style="color: #888; font-size: 0.72rem;">Rebound Target 1</span><br><b style="color: #00E676; font-size: 0.95rem;">₹{c.get("rebound_target_1", 0.0):,.1f}</b></div>'
+                        f'<div><span style="color: #888; font-size: 0.72rem;">Rebound Target 2</span><br><b style="color: #00E676; font-size: 0.95rem;">₹{c.get("rebound_target_2", 0.0):,.1f}</b></div>'
+                        f'</div>'
+                        f'<div style="margin: 8px 0 0 0; color: #E2E8F0; font-size: 0.85rem; line-height: 1.45;"><i>&ldquo;{c.get("recovery_catalyst", "")}&rdquo;</i></div>'
+                        f'</div>'
+                    )
+                    render_html(card_html)
+
+                    # 1-Click Track in Live Item Tracker
+                    current_user_name = get_current_user() or "trader"
+                    with st.expander(f"📌 Track {d_sym} Rebound in My Item Tracker"):
+                        with st.form(f"track_dip_form_{d_idx}_{d_sym}", clear_on_submit=False):
+                            tc1, tc2 = st.columns(2)
+                            t_entry = tc1.number_input("Entry Price (₹)", value=float(c.get("springboard_entry_zone", c.get("close", 100.0))), key=f"t_dip_buy_{d_idx}")
+                            t_qty = tc2.number_input("Quantity / Units", value=50.0, min_value=1.0, key=f"t_dip_qty_{d_idx}")
+                            
+                            tc3, tc4 = st.columns(2)
+                            t_type = tc3.selectbox("Asset Type", ["EQUITY", "OPTION_CE", "FUTURES"], index=0, key=f"t_dip_type_{d_idx}")
+                            t_sl = tc4.number_input("Invalidation Stop Loss (₹)", value=float(c.get("invalidation_sl", t_entry * 0.97)), key=f"t_dip_sl_{d_idx}")
+                            
+                            t_tgt = float(c.get("rebound_target_1", t_entry * 1.08))
+                            t_notes = f"Dip Leader setup ({c.get('recovery_velocity_badge', '')[:30]})"
+                            
+                            t_sub = st.form_submit_button(f"➕ Track {d_sym} in Live Portfolio", type="primary", use_container_width=True)
+                            if t_sub:
+                                PortfolioTracker.add_position(
+                                    username=current_user_name,
+                                    symbol=d_sym,
+                                    asset_type=t_type,
+                                    buy_price=float(t_entry),
+                                    quantity=float(t_qty),
+                                    stop_loss=float(t_sl),
+                                    target=float(t_tgt),
+                                    notes=t_notes
+                                )
+                                st.toast(f"✅ Added {d_sym} to {current_user_name}'s Item Tracker!", icon="📌")
+                                time.sleep(0.4)
+                                st.rerun()
+
+            # 4. Interactive Summary Table
+            st.markdown("### 📋 Dip Leaders Quantitative Comparison Table")
+            dip_tbl = []
+            for c in dip_candidates:
+                dip_tbl.append({
+                    "Symbol": c.get("symbol"),
+                    "Score": c.get("score"),
+                    "LTP (₹)": f"₹{c.get('close', 0.0):,.2f}",
+                    "Change %": f"{c.get('change_pct', 0.0):+.2f}%",
+                    "Dip Alpha %": f"{c.get('dip_alpha_pct', 0.0):+.2f}%",
+                    "Up-Beta": f"{c.get('bounce_velocity_up_beta', 1.0):.2f}x",
+                    "Support Floor": c.get("support_floor_desc", "20 EMA"),
+                    "Pullback RVol": f"{c.get('pullback_rvol', 1.0):.2f}x",
+                    "Lower Wick %": f"{c.get('lower_wick_pct', 0.0):.1f}%",
+                    "Springboard Entry": f"₹{c.get('springboard_entry_zone', 0.0):,.1f}",
+                    "Invalidation SL": f"₹{c.get('invalidation_sl', 0.0):,.1f}",
+                    "Target 1": f"₹{c.get('rebound_target_1', 0.0):,.1f}",
+                    "Target 2": f"₹{c.get('rebound_target_2', 0.0):,.1f}",
+                    "Sector": c.get("sector", "Broad"),
+                    "Macro Alignment": c.get("macro_alignment", "Neutral")
+                })
+            st.dataframe(pd.DataFrame(dip_tbl), use_container_width=True)
+
+            # 5. Technical Candlestick Inspector for Dip Leaders
+            st.markdown("### 🔍 Technical Rebound Candlestick Inspector")
+            d_syms_chart = [c["symbol"] for c in dip_candidates if c["symbol"] in data_dict]
+            if d_syms_chart:
+                d_sel_sym = st.selectbox("Select Dip Leader to Inspect Support Floor & Wicks", d_syms_chart, key="sel_dip_chart")
+                if d_sel_sym in data_dict:
+                    df_d_chart = enrich_with_indicators(data_dict[d_sel_sym].tail(90).copy())
+                    
+                    fig_d = make_subplots(
+                        rows=2, cols=1,
+                        shared_xaxes=True,
+                        vertical_spacing=0.04,
+                        subplot_titles=(f"{d_sel_sym} — Dynamic Support Defense & Coiled Spring Floor", "Volume & Selling Exhaustion"),
+                        row_width=[0.25, 0.75]
+                    )
+                    
+                    fig_d.add_trace(go.Candlestick(
+                        x=df_d_chart.index,
+                        open=df_d_chart['open'],
+                        high=df_d_chart['high'],
+                        low=df_d_chart['low'],
+                        close=df_d_chart['close'],
+                        name='Price'
+                    ), row=1, col=1)
+
+                    if 'ema_20' in df_d_chart.columns:
+                        fig_d.add_trace(go.Scatter(x=df_d_chart.index, y=df_d_chart['ema_20'], line=dict(color='#00E676', width=1.5), name='EMA 20 (Fast Floor)'), row=1, col=1)
+                    if 'ema_50' in df_d_chart.columns:
+                        fig_d.add_trace(go.Scatter(x=df_d_chart.index, y=df_d_chart['ema_50'], line=dict(color='#29B6F6', width=1.5), name='EMA 50 (Structural Floor)'), row=1, col=1)
+                    if 'sma_200' in df_d_chart.columns:
+                        fig_d.add_trace(go.Scatter(x=df_d_chart.index, y=df_d_chart['sma_200'], line=dict(color='#AB47BC', width=1.5), name='SMA 200 (Stage-2 Filter)'), row=1, col=1)
+
+                    cand_obj = next((c for c in dip_candidates if c["symbol"] == d_sel_sym), None)
+                    if cand_obj and cand_obj.get("invalidation_sl"):
+                        fig_d.add_hline(
+                            y=cand_obj["invalidation_sl"],
+                            line_dash="dash",
+                            line_color="#FF5252",
+                            annotation_text=f"Invalidation SL (₹{cand_obj['invalidation_sl']:,.1f})",
+                            annotation_position="bottom right",
+                            row=1, col=1
+                        )
+                    if cand_obj and cand_obj.get("rebound_target_1"):
+                        fig_d.add_hline(
+                            y=cand_obj["rebound_target_1"],
+                            line_dash="dash",
+                            line_color="#00E676",
+                            annotation_text=f"Rebound T1 (₹{cand_obj['rebound_target_1']:,.1f})",
+                            annotation_position="top right",
+                            row=1, col=1
+                        )
+
+                    v_colors = ['#FF5252' if c < o else '#00E676' for c, o in zip(df_d_chart['close'], df_d_chart['open'])]
+                    fig_d.add_trace(go.Bar(
+                        x=df_d_chart.index,
+                        y=df_d_chart['volume'],
+                        marker_color=v_colors,
+                        name='Volume'
+                    ), row=2, col=1)
+
+                    fig_d.update_layout(
+                        xaxis_rangeslider_visible=False,
+                        template="plotly_dark",
+                        height=550,
+                        margin=dict(l=20, r=20, t=40, b=20)
+                    )
+                    st.plotly_chart(fig_d, use_container_width=True)
+
     with tab_ai:
         st.subheader("Actionable Trade Plans & Risk Management")
         if not all_candidates:
@@ -1014,10 +1325,10 @@ if run_btn or "cached_results" in st.session_state:
         else:
             advisor = AIAdvisor(api_key=gemini_key_input if gemini_key_input else None)
             engine_name = "Google Gemini Flash (Live LLM)" if advisor.is_ai_ready else "Algorithmic Precision Engine"
-            st.caption(f"Trade plans generated via **{engine_name}**")
+            st.caption(f"Trade plans generated via **{engine_name}** | Broader Macro Regime: **{macro_context.get('macro_regime_badge', '🟢 RISK-ON')}**")
 
-            with st.spinner("Generating risk-reward evaluations and trade thesis..."):
-                plans = advisor.analyze_candidates(all_candidates)
+            with st.spinner("Generating risk-reward evaluations, macro impact and trade thesis..."):
+                plans = advisor.analyze_candidates(all_candidates, macro_context=macro_context)
 
             # Display cards in 2 columns
             cols = st.columns(2)
@@ -1052,12 +1363,26 @@ if run_btn or "cached_results" in st.session_state:
                         }
                         unit_badge = f' | Contract: <b style="color: #FFD54F;">{comm_map.get(sym, "MCX Commodity")}</b>'
 
+                    macro_b = p.get("macro_badge", "")
+                    macro_badge_html = f' | <b style="color: #64B5F6;">{macro_b}</b>' if macro_b else ''
+
                     # Short / Put option explainer banner
                     short_banner = ""
                     if not is_bullish:
                         short_banner = (
                             f'<div style="background-color: #2b0d10; border-left: 4px solid #FF5252; padding: 6px 12px; border-radius: 4px; font-size: 0.8rem; color: #FFCDD2; margin-bottom: 8px;">'
                             f'<b>📉 Short / Bearish Setup:</b> Profit is booked as price declines below Entry (₹{p.get("entry_price")}) toward Downside Targets.'
+                            f'</div>'
+                        )
+
+                    macro_impact_banner = ""
+                    if macro_b:
+                        is_tailwind = "TAILWIND" in macro_b.upper() or "BENEFICIARY" in macro_b.upper()
+                        mb_color = "#10B981" if is_tailwind else "#F59E0B"
+                        mb_bg = "#064e3b33" if is_tailwind else "#78350f33"
+                        macro_impact_banner = (
+                            f'<div style="background-color: {mb_bg}; border-left: 4px solid {mb_color}; padding: 6px 12px; border-radius: 4px; font-size: 0.82rem; color: #E2E8F0; margin-bottom: 8px;">'
+                            f'<b>🌍 Macro Factor Impact:</b> {macro_b}'
                             f'</div>'
                         )
 
@@ -1075,11 +1400,12 @@ if run_btn or "cached_results" in st.session_state:
                         f'<span style="background-color: {badge_color}; color: {badge_text_color}; padding: 4px 12px; border-radius: 4px; font-weight: bold; font-size: 0.85rem;">{action}</span>'
                         f'</div>'
                         f'<p style="margin: 6px 0 10px 0; color: #8892B0; font-size: 0.85rem;">'
-                        f'Category: <b style="color: #64B5F6;">{p.get("category")}</b>{unit_badge} | '
+                        f'Category: <b style="color: #64B5F6;">{p.get("category")}</b>{unit_badge}{macro_badge_html} | '
                         f'Timeframe: <b style="color: #FFF;">{p.get("timeframe")}</b> | '
                         f'Conviction: <b style="color: #FFD54F;">{p.get("conviction")}</b>'
                         f'</p>'
                         f'{short_banner}'
+                        f'{macro_impact_banner}'
                         f'<div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; background-color: #0e1117; padding: 12px; border-radius: 6px; margin: 10px 0 6px 0;">'
                         f'<div><span style="color: #888; font-size: 0.75rem;">Entry Trigger</span><br><b style="color: #FFF; font-size: 1.05rem;">₹{p.get("entry_price")}</b></div>'
                         f'<div><span style="color: #888; font-size: 0.75rem;">{sl_lbl}</span><br><b style="color: #FF5252; font-size: 1.05rem;">₹{p.get("tight_stop_loss", p.get("stop_loss"))}</b><br><span style="font-size: 0.7rem; color: #A0AEC0;">Swing Floor: ₹{p.get("conservative_stop_loss", p.get("stop_loss"))}</span></div>'
@@ -1185,6 +1511,16 @@ if run_btn or "cached_results" in st.session_state:
                     }
                     if "recommended_strike" in c:
                         row["Rec. Strike"] = f"{c['recommended_strike']:.0f} {c.get('option_type', '')}"
+                    if "dip_alpha_pct" in c:
+                        row["Dip Alpha %"] = f"{c['dip_alpha_pct']:+.2f}%"
+                    if "bounce_velocity_up_beta" in c:
+                        row["Up-Beta"] = f"{c['bounce_velocity_up_beta']:.2f}x"
+                    if "springboard_entry_zone" in c:
+                        row["Springboard Entry"] = f"₹{c['springboard_entry_zone']:,.1f}"
+                    if "invalidation_sl" in c:
+                        row["Invalidation SL"] = f"₹{c['invalidation_sl']:,.1f}"
+                    if "rebound_target_1" in c:
+                        row["Rebound T1"] = f"₹{c['rebound_target_1']:,.1f}"
                     table_data.append(row)
                 st.dataframe(pd.DataFrame(table_data), use_container_width=True)
             else:
@@ -1325,6 +1661,22 @@ if run_btn or "cached_results" in st.session_state:
            - Put (PE) buying: Bearish drop, elevated volume, $\text{RSI} \le 46$, $\text{CLV} \le 0.35$.
            - Options Volume Confirmation ($\ge 2.0\times$ 9d avg) for delta thrust.
            - Dynamic ATM / ITM / OTM strike calculations with Indian stock step intervals.
+
+        7. **First-to-Recover Dip Leaders (The Coiled Spring Strategy)**:
+           - **Stage-2 Structural Trend**: $\text{Price} > \text{SMA}_{200}$ and $\text{EMA}_{20} > \text{EMA}_{50}$. Ensures the stock was an institutional leader before market weakness and remains in a structural bull cycle.
+           - **Panic-Day Dip Alpha vs NIFTY**: Measures relative performance during market drop sessions ($\text{NIFTY} \le -0.75\%$). Dip leaders display $\text{Stock Return} - \text{NIFTY Return} \ge +1.0\%$ or close green, showing smart money absorption of panic selling.
+           - **High Up-Beta (Bounce Elasticity)**: Measures upside response when NIFTY turns green. Leaders typically have $\text{Up-Beta} \ge 1.25\text{x}$, delivering rapid multi-fold upside as soon as market selling pressure eases.
+           - **Volume Supply Exhaustion**: During pullbacks into support, trading volume drops ($\text{RVol}_{20d} < 1.10\text{x}$). Confirms absence of institutional distribution.
+           - **Dynamic Moving Average Support Defense**: Price pulls back to test 20 EMA, 50 EMA, or 50% candle body support and leaves a prominent lower wick ($\ge 25\%$ of candle range), signaling immediate buyer demand.
+
+        8. **Macroeconomic & Commodity Cross-Asset Integration**:
+           - **Crude Oil ($/bbl & MCX ₹/bbl)**:
+             - *Headwinds*: Elevated crude ($> \$85/\text{bbl}$) compresses gross margins for consumer sectors: Paints (`ASIANPAINT`, `BERGEPAINT`), Tyres (`APOLLOTYRE`, `MRF`), Aviation (`INDIGO`), OMCs (`BPCL`, `HPCL`), and Auto (`MARUTI`).
+             - *Tailwinds*: Upstream exploration (`ONGC`, `OIL`) directly expands realizations.
+           - **USD/INR Exchange Rate**:
+             - Rupee depreciation expands operating profit margins and realizations for IT exporters (`TCS`, `INFY`, `HCLTECH`, `LTIM`) and Pharma exporters (`SUNPHARMA`, `DRREDDY`, `CIPLA`, `DIVISLAB`).
+           - **India VIX Volatility Filter**:
+             - High VIX ($> 18$) mandates tight risk controls, wider trailing playbooks, and favors defensive dip leaders over speculative high-beta breakouts.
         """)
 
     with tab_audit:

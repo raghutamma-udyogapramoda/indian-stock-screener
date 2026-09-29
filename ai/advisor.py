@@ -9,6 +9,7 @@ from typing import Any, Dict, List, Optional
 
 from ai.prompt_builder import PromptBuilder
 from config.settings import GEMINI_API_KEY, GEMINI_MODEL
+from core.macro import MacroMarketEngine
 
 
 class AIAdvisor:
@@ -34,18 +35,28 @@ class AIAdvisor:
     def is_ai_ready(self) -> bool:
         return self.client is not None
 
-    def analyze_candidates(self, candidates: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    def analyze_candidates(
+        self,
+        candidates: List[Dict[str, Any]],
+        macro_context: Optional[Dict[str, Any]] = None
+    ) -> List[Dict[str, Any]]:
         """
-        Passes shortlisted setups to Gemini.
+        Passes shortlisted setups and macro context to Gemini.
         If API key is missing or calls fail, generates an algorithmic trade plan so workflow is uninterrupted.
         """
         if not candidates:
             return []
 
+        if macro_context is None:
+            try:
+                macro_context = MacroMarketEngine.analyze_macro_regime()
+            except Exception:
+                macro_context = None
+
         # If live AI is available, query Gemini
         if self.is_ai_ready:
             try:
-                user_content = PromptBuilder.build_user_prompt(candidates)
+                user_content = PromptBuilder.build_user_prompt(candidates, macro_context=macro_context)
                 prompt_full = f"{PromptBuilder.SYSTEM_PROMPT}\n\n{user_content}"
                 
                 # Try preferred model and fallback if needed
@@ -91,11 +102,16 @@ class AIAdvisor:
                 pass
 
         # Algorithmic fallback: generates mathematically sound trade plan
-        return self._generate_algorithmic_trade_plan(candidates)
+        return self._generate_algorithmic_trade_plan(candidates, macro_context=macro_context)
 
-    def _generate_algorithmic_trade_plan(self, candidates: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    def _generate_algorithmic_trade_plan(
+        self,
+        candidates: List[Dict[str, Any]],
+        macro_context: Optional[Dict[str, Any]] = None
+    ) -> List[Dict[str, Any]]:
         """
         Calculates mathematically precise Entry, Stop-Loss, and Target levels.
+        Integrates macroeconomic forces (Crude Oil, USD/INR, VIX, NIFTY) and Dip Leaders.
         Serves as the high-precision algorithmic engine (and zero-dependency fallback when LLM is offline).
 
         Formula & Risk Architecture per Category:
@@ -275,6 +291,32 @@ class AIAdvisor:
                 thesis = f"Directional surge triggering {strike:.0f} {opt_type} option play with favorable delta.{vol_tag}{extra_insight}"
                 trailing_playbook = f"Option Delta Surge: Book 50% profit at T1 (₹{target_1:,.1f}) and trail SL to option premium breakeven."
 
+            elif cat in ["DIP_LEADER", "DIP"]:
+                entry = close
+                invalidation_sl = float(c.get("invalidation_sl", round(close * 0.97, 2)))
+                tight_sl = invalidation_sl
+                cons_sl = round(invalidation_sl * 0.985, 2)
+                stop_loss = tight_sl
+                risk = max(entry - stop_loss, close * 0.015)
+                target_1 = round(float(c.get("rebound_target_1", entry + (1.6 * risk))), 2)
+                target_2 = round(float(c.get("rebound_target_2", entry + (2.8 * risk))), 2)
+                target_3 = round(float(c.get("rebound_target_3", entry + (4.0 * risk))), 2)
+                target_4 = round(entry + (5.0 * risk), 2)
+                action = "BUY"
+                timeframe = "1-3 weeks (Market Dip Springboard)"
+                conviction = "HIGH" if (c.get("score", 0) >= 80 or c.get("green_on_dips", 0) >= 1) else "MEDIUM"
+                rec_badge = c.get("recovery_velocity_badge", "⚡ ULTRA-FAST BOUNCE")
+                alpha_val = c.get("dip_alpha", 0.0)
+                thesis = (
+                    f"{rec_badge}: Superior relative strength on market dips (Alpha: {alpha_val:+.1f}%) "
+                    f"with dry selling volume ({vol_mult:.1f}x). Prime coiled spring to lead market recovery as Nifty stabilizes.{extra_insight}"
+                )
+                trailing_playbook = (
+                    f"Accumulate in springboard zone (₹{entry:,.1f}). Book 40% at T1 (₹{target_1:,.1f}) "
+                    f"and trail SL immediately to Entry for a risk-free trade. Book next 30% at T2 (₹{target_2:,.1f}) "
+                    f"and trail SL to T1. Let remaining 30% runners target T3/T4 (₹{target_3:,.1f})."
+                )
+
             else:
                 entry = close
                 tight_sl = round(close * 0.98, 2)
@@ -290,6 +332,21 @@ class AIAdvisor:
                 conviction = "MEDIUM"
                 thesis = "Technical setup meeting initial volume and momentum criteria."
                 trailing_playbook = "Standard swing: Book 50% at T1 and trail SL to cost."
+
+            # Evaluate macroeconomic forces & sector sensitivities (Crude Oil, Currency, VIX)
+            sym = c.get("symbol", "")
+            macro_impact = MacroMarketEngine.get_stock_macro_impact(sym, macro_context)
+            macro_badge = macro_impact.get("badge", "")
+            macro_thesis = macro_impact.get("thesis", "")
+            
+            if macro_impact.get("has_headwind"):
+                thesis = f"{thesis} | {macro_badge}: {macro_thesis}"
+                if conviction == "HIGH" and macro_impact.get("conviction_delta", 0) <= -12:
+                    conviction = "MEDIUM"
+            elif macro_impact.get("has_tailwind"):
+                thesis = f"{thesis} | {macro_badge}: {macro_thesis}"
+                if conviction == "MEDIUM" and macro_impact.get("conviction_delta", 0) >= 12:
+                    conviction = "HIGH"
 
             # Strict Mathematical Progression Guard: Guarantee targets never overlap or invert
             is_bullish = ("BUY" in action or action == "LONG") and "PE" not in action
@@ -341,7 +398,8 @@ class AIAdvisor:
                 "thesis": thesis,
                 "trailing_playbook": trailing_playbook,
                 "shares_for_2k_risk": shares_for_2k_risk,
-                "capital_for_2k_risk": capital_for_2k_risk
+                "capital_for_2k_risk": capital_for_2k_risk,
+                "macro_badge": macro_badge
             })
 
         return plans
