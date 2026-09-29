@@ -224,9 +224,13 @@ class DipLeaderScreener(BaseScreener):
         rebound_target_3 = round(close + (4.0 * risk), 2)
 
         # Macro Context Analysis
-        macro_impact = MacroMarketEngine.get_stock_macro_impact(clean)
-        macro_badge = macro_impact.get("badge", "")
-        macro_thesis = macro_impact.get("thesis", "")
+        try:
+            macro_impact = MacroMarketEngine.get_stock_macro_impact(clean)
+            macro_badge = macro_impact.get("badge", "")
+            macro_thesis = macro_impact.get("thesis", "")
+        except Exception:
+            macro_badge = ""
+            macro_thesis = ""
 
         # Key Triggers list
         reasons = []

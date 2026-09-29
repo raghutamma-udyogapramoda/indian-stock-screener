@@ -45,12 +45,23 @@ except Exception:
     get_current_user = _auth_mod.get_current_user
     is_admin = _auth_mod.is_admin
 
-# Ensure core.universe is fresh and has all latest methods (guards against Streamlit Cloud hot reload issues)
+# Guard against Streamlit Cloud stale in-memory module caching across git updates
+import importlib
+_APP_BUILD_SIG = "2026_09_29_macro_v6_clean"
+if sys.modules.get("__CURRENT_BUILD_SIG__") != _APP_BUILD_SIG:
+    for mod_name in list(sys.modules.keys()):
+        if any(mod_name == pkg or mod_name.startswith(pkg + ".") for pkg in ("core", "screeners", "ai", "providers")):
+            sys.modules.pop(mod_name, None)
+    sys.modules["__CURRENT_BUILD_SIG__"] = _APP_BUILD_SIG
+
+# Ensure core.universe and core.macro are strictly fresh
 try:
     import core.universe
-    if not hasattr(core.universe.UniverseManager, "get_usdinr_rate"):
-        import importlib
-        importlib.reload(core.universe)
+    import core.macro
+    import screeners.dip_leaders
+    importlib.reload(core.universe)
+    importlib.reload(core.macro)
+    importlib.reload(screeners.dip_leaders)
 except Exception:
     pass
 
@@ -604,7 +615,10 @@ def execute_screening(u_name, custom_list, strat, top_limit, prov_mode, b_key=""
     yf_idx_prov = YahooFinanceProvider(cache_ttl_hours=cache_ttl)
     idx_raw = yf_idx_prov.fetch_batch_ohlcv(idx_symbols, period="6mo", interval="1d", max_workers=5, use_cache=not bypass_cache)
     index_results = IndexDerivativesAnalyzer.analyze_batch(idx_raw)
-    macro_context = MacroMarketEngine.analyze_macro_regime(idx_raw)
+    try:
+        macro_context = MacroMarketEngine.analyze_macro_regime(idx_raw)
+    except Exception:
+        macro_context = MacroMarketEngine._get_default_macro_dict()
 
     # 4. Extract data health telemetry from providers
     p_health = provider.get_health_status() if hasattr(provider, "get_health_status") else {}
@@ -696,7 +710,10 @@ if run_btn or "cached_results" in st.session_state:
     elapsed = st.session_state["elapsed"]
     macro_context = st.session_state.get("macro_context")
     if not macro_context or not isinstance(macro_context, dict):
-        macro_context = MacroMarketEngine.analyze_macro_regime()
+        try:
+            macro_context = MacroMarketEngine.analyze_macro_regime()
+        except Exception:
+            macro_context = MacroMarketEngine._get_default_macro_dict()
         st.session_state["macro_context"] = macro_context
     data_health = st.session_state.get("data_health", {
         "is_latest": True,
