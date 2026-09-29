@@ -437,3 +437,8 @@ class UniverseManager:
                 df[col] = (df[col] * multiplier).round(2)
         return df
 
+
+def get_usdinr_rate() -> float:
+    """Module-level function returning current USD/INR exchange rate."""
+    return UniverseManager.get_usdinr_rate()
+

@@ -4,11 +4,47 @@ Analyzes macroeconomic drivers (NIFTY 50, BANK NIFTY, INDIA VIX, Crude Oil, USD/
 and evaluates their direct structural impact on specific stocks and sectors.
 """
 
+import importlib
 from typing import Any, Dict, List, Optional
 import numpy as np
 import pandas as pd
 
 from core.universe import UniverseManager
+
+
+def _safe_get_usdinr_rate() -> float:
+    """Safe helper to fetch USD/INR rate even if core.universe was cached by Streamlit."""
+    try:
+        from core.universe import UniverseManager
+        if not hasattr(UniverseManager, "get_usdinr_rate"):
+            import core.universe
+            importlib.reload(core.universe)
+            from core.universe import UniverseManager
+        if hasattr(UniverseManager, "get_usdinr_rate"):
+            val = UniverseManager.get_usdinr_rate()
+            if val and val > 50:
+                return float(val)
+    except Exception:
+        pass
+    
+    try:
+        import yfinance as yf
+        tk = yf.Ticker("USDINR=X")
+        fi = tk.fast_info
+        p = getattr(fi, "last_price", None) or getattr(fi, "regular_market_price", None)
+        if p and p > 50:
+            return float(p)
+    except Exception:
+        pass
+    return 95.5
+
+
+# Ensure UniverseManager has get_usdinr_rate attached safely
+try:
+    if not hasattr(UniverseManager, "get_usdinr_rate"):
+        UniverseManager.get_usdinr_rate = staticmethod(_safe_get_usdinr_rate)
+except Exception:
+    pass
 
 
 # Comprehensive Mapping of Macro-Sensitive Indian Equities
@@ -121,7 +157,7 @@ class MacroMarketEngine:
         and categorizes broader market health, VIX volatility risk, and commodity forces.
         """
         # 1. USD/INR exchange rate
-        usdinr_rate = UniverseManager.get_usdinr_rate()
+        usdinr_rate = _safe_get_usdinr_rate()
         
         # 2. Extract benchmark series
         benchmarks = benchmark_dict or {}

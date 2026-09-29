@@ -45,6 +45,15 @@ except Exception:
     get_current_user = _auth_mod.get_current_user
     is_admin = _auth_mod.is_admin
 
+# Ensure core.universe is fresh and has all latest methods (guards against Streamlit Cloud hot reload issues)
+try:
+    import core.universe
+    if not hasattr(core.universe.UniverseManager, "get_usdinr_rate"):
+        import importlib
+        importlib.reload(core.universe)
+except Exception:
+    pass
+
 from ai.advisor import AIAdvisor
 from core.indices import IndexDerivativesAnalyzer, INDEX_SPECS
 from core.macro import MacroMarketEngine
