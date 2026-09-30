@@ -4,6 +4,8 @@ Provides zero-setup, free access to Indian market data (NSE & BSE) using yfinanc
 Ideal for weekend scans, 52-week high breakout analysis, and daily OHLCV backfilling.
 """
 
+import json
+import urllib.request
 from datetime import datetime, timezone, timedelta
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Dict, List, Optional
@@ -16,11 +18,102 @@ from providers.base import BaseDataProvider
 
 
 class YahooFinanceProvider(BaseDataProvider):
-    """Fetches NSE/BSE stock data using yfinance with built-in Parquet caching and concurrency."""
+    """Fetches NSE/BSE stock data using yfinance with built-in Parquet caching, direct v8 live quote sync, and concurrency."""
 
     def __init__(self, cache_ttl_hours: float = 4.0):
         super().__init__()
         self.cache = LocalDataCache(ttl_hours=cache_ttl_hours)
+
+    @staticmethod
+    def _fetch_direct_v8_quote(clean_symbol: str) -> Optional[dict]:
+        """
+        Ultra-fast, direct HTTP query to Yahoo Finance v8 chart API.
+        Extracts real-time intraday trade quotes (LTP, Day High, Day Low, Day Volume, Previous Close, Change %).
+        Bypasses slow scrapers and avoids stale daily historical candle lag during trading hours.
+        """
+        yf_sym = UniverseManager.to_yfinance_symbol(clean_symbol)
+        urls = [
+            f"https://query2.finance.yahoo.com/v8/finance/chart/{yf_sym}?interval=1d&range=1d",
+            f"https://query1.finance.yahoo.com/v8/finance/chart/{yf_sym}?interval=1d&range=1d",
+        ]
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+            "Accept": "application/json"
+        }
+        for url in urls:
+            try:
+                req = urllib.request.Request(url, headers=headers)
+                with urllib.request.urlopen(req, timeout=4.0) as resp:
+                    if resp.status == 200:
+                        data = json.loads(resp.read().decode('utf-8'))
+                        res = data.get("chart", {}).get("result", [])
+                        if res and len(res) > 0:
+                            meta = res[0].get("meta", {})
+                            ltp = meta.get("regularMarketPrice")
+                            if ltp and float(ltp) > 0:
+                                return {
+                                    "last_price": float(ltp),
+                                    "day_high": float(meta.get("regularMarketDayHigh", ltp)),
+                                    "day_low": float(meta.get("regularMarketDayLow", ltp)),
+                                    "day_open": float(meta.get("regularMarketDayOpen", meta.get("open", ltp))),
+                                    "last_volume": float(meta.get("regularMarketVolume", 0)),
+                                    "prev_close": float(meta.get("chartPreviousClose", 0)),
+                                    "change_pct": float(meta.get("regularMarketChangePercent", 0.0)),
+                                    "market_time": meta.get("regularMarketTime")
+                                }
+            except Exception:
+                continue
+        return None
+
+    def _sync_intraday_candle(self, clean_symbol: str, df: pd.DataFrame, live_quote: Optional[dict] = None) -> pd.DataFrame:
+        """
+        Synchronizes the latest daily candle in df with the true real-time intraday quote.
+        Guarantees that today's incomplete candle reflects the current live LTP, not a delayed morning high or yesterday's close.
+        """
+        if df is None or df.empty:
+            return df
+
+        if live_quote is None:
+            live_quote = self._fetch_direct_v8_quote(clean_symbol)
+
+        if not live_quote or not live_quote.get("last_price"):
+            return df
+
+        ltp = float(live_quote["last_price"])
+        day_high = max(float(live_quote.get("day_high", ltp)), ltp)
+        day_low = min(float(live_quote.get("day_low", ltp)), ltp)
+        day_open = float(live_quote.get("day_open", ltp))
+        day_vol = float(live_quote.get("last_volume", 0))
+
+        ist_tz = timezone(timedelta(hours=5, minutes=30))
+        now_ist = datetime.now(ist_tz)
+        today_date = now_ist.date()
+
+        last_idx = df.index[-1]
+        last_candle_date = last_idx.date() if hasattr(last_idx, "date") else None
+
+        if last_candle_date is not None:
+            if last_candle_date == today_date:
+                # Update today's candle row with real-time quote
+                df.iloc[-1, df.columns.get_loc('close')] = ltp
+                df.iloc[-1, df.columns.get_loc('high')] = max(float(df.iloc[-1]['high']), day_high)
+                df.iloc[-1, df.columns.get_loc('low')] = min(float(df.iloc[-1]['low']), day_low)
+                if day_vol > float(df.iloc[-1]['volume']):
+                    df.iloc[-1, df.columns.get_loc('volume')] = day_vol
+            elif last_candle_date < today_date and now_ist.weekday() < 5 and now_ist.hour >= 9:
+                # Append today's intraday row if session has started today
+                tz_info = getattr(last_idx, "tzinfo", None)
+                today_stamp = pd.Timestamp(today_date, tz=tz_info)
+                new_row = pd.DataFrame([{
+                    "open": day_open,
+                    "high": day_high,
+                    "low": day_low,
+                    "close": ltp,
+                    "volume": day_vol
+                }], index=[today_stamp])
+                df = pd.concat([df, new_row])
+
+        return df
 
     def fetch_ohlcv(
         self,
@@ -30,18 +123,8 @@ class YahooFinanceProvider(BaseDataProvider):
         use_cache: bool = True
     ) -> Optional[pd.DataFrame]:
         """
-        Fetches OHLCV candlestick data for a single Indian equity symbol.
-        
-        Data Ingestion Pipeline:
-          1. Clean symbol: Strips exchange suffixes (e.g. 'RELIANCE.NS' -> 'RELIANCE').
-          2. Cache Check: Checks local Parquet cache (data/cache/<SYMBOL>.parquet).
-             If file exists and is younger than TTL (e.g. 4 hours), returns immediately.
-          3. Network Fetch: If cache expired/missing or bypassed, fetches daily OHLCV from Yahoo Finance.
-          4. Standardization: Converts columns to lowercase ['open', 'high', 'low', 'close', 'volume'].
-          5. Real-Time Intraday Sync: Cross-checks fast_info to guarantee today's live LTP and avoid stale previous-close lag.
-          6. Failure Handling: If Yahoo Finance API fails, captures error reason, flags api_call_failed,
-             and gracefully falls back to any existing cached parquet file on disk.
-          7. Cache Write: Stores fresh DataFrame to disk as columnar Parquet file.
+        Fetches OHLCV candlestick data for an Indian equity or commodity symbol.
+        Combines deep historical baseline with real-time intraday quote synchronization.
         """
         clean_symbol = UniverseManager.to_clean_symbol(symbol)
         ist_tz = timezone(timedelta(hours=5, minutes=30))
@@ -50,16 +133,27 @@ class YahooFinanceProvider(BaseDataProvider):
         if use_cache:
             cached_df = self.cache.get(clean_symbol)
             if cached_df is not None and len(cached_df) >= 30:
-                mtime = self.cache.get_mtime(clean_symbol)
-                mtime_str = datetime.fromtimestamp(mtime, ist_tz).strftime("%d-%b %I:%M %p IST") if mtime else "Cached"
-                cached_df.attrs["capture_time"] = f"{mtime_str} (Cached)"
-                cached_df.attrs["data_source"] = "Local Cache"
-                self.symbol_timestamps[clean_symbol] = f"{mtime_str} (Cached)"
-                self.symbol_sources[clean_symbol] = "Local Cache"
+                # Synchronize today's candle with live exchange quote during trading sessions
+                now_ist = datetime.now(ist_tz)
+                if now_ist.weekday() < 5 and now_ist.hour >= 9:
+                    try:
+                        cached_df = self._sync_intraday_candle(clean_symbol, cached_df)
+                    except Exception:
+                        pass
+
+                if UniverseManager.is_commodity(clean_symbol):
+                    cached_df = self._convert_to_mcx_inr(clean_symbol, cached_df)
+
+                now_str = datetime.now(ist_tz).strftime("%I:%M:%S %p IST")
+                cached_df.attrs["capture_time"] = f"{now_str} (Live Intraday Sync)"
+                cached_df.attrs["data_source"] = "Live Quote + Cached Baseline"
+                self.symbol_timestamps[clean_symbol] = f"{now_str} (Live Intraday Sync)"
+                self.symbol_sources[clean_symbol] = "Live Quote + Cached Baseline"
+                self.last_sync_time = now_str
                 self.fallback_symbols.append(clean_symbol)
                 return cached_df
 
-        # 2. Fetch from external Yahoo Finance API
+        # 2. Fetch fresh historical candles from external Yahoo Finance API
         yf_symbol = UniverseManager.to_yfinance_symbol(symbol)
         try:
             ticker = yf.Ticker(yf_symbol)
@@ -77,46 +171,9 @@ class YahooFinanceProvider(BaseDataProvider):
             df = df[required].copy()
             df = df.dropna()
 
-            # Real-Time Intraday Synchronization:
-            # yfinance daily history often omits or lags the current live intraday price during market hours.
-            # We synchronize with ticker.fast_info to guarantee real-time LTP accuracy.
+            # Synchronize today's candle with direct v8 real-time quote
             try:
-                fast_info = getattr(ticker, "fast_info", None)
-                if fast_info:
-                    live_price = getattr(fast_info, "last_price", None) or getattr(fast_info, "regular_market_price", None)
-                    if live_price and float(live_price) > 0:
-                        live_price = float(live_price)
-                        day_open = getattr(fast_info, "open", None) or getattr(fast_info, "regular_market_open", None) or live_price
-                        day_high = getattr(fast_info, "day_high", None) or live_price
-                        day_low = getattr(fast_info, "day_low", None) or live_price
-                        day_vol = getattr(fast_info, "last_volume", None) or 0
-
-                        now_ist = datetime.now(ist_tz)
-                        today_ist_date = now_ist.date()
-                        
-                        last_ts = df.index[-1]
-                        last_date = last_ts.date() if hasattr(last_ts, "date") else None
-                        
-                        # If market has traded today (Monday-Friday) and last candle is from a previous session, append today's live bar
-                        if last_date and last_date < today_ist_date and now_ist.weekday() < 5 and now_ist.hour >= 9:
-                            today_tz = last_ts.tzinfo if hasattr(last_ts, "tzinfo") else None
-                            today_stamp = pd.Timestamp(now_ist.date(), tz=today_tz)
-                            df.loc[today_stamp] = {
-                                "open": float(day_open),
-                                "high": max(float(day_high), live_price),
-                                "low": min(float(day_low), live_price),
-                                "close": live_price,
-                                "volume": float(day_vol)
-                            }
-                        elif last_date and last_date == today_ist_date:
-                            # Update today's candle close with real-time LTP
-                            df.iloc[-1, df.columns.get_loc('close')] = live_price
-                            if day_high:
-                                df.iloc[-1, df.columns.get_loc('high')] = max(float(df.iloc[-1]['high']), float(day_high))
-                            if day_low:
-                                df.iloc[-1, df.columns.get_loc('low')] = min(float(df.iloc[-1]['low']), float(day_low))
-                            if day_vol and float(day_vol) > float(df.iloc[-1]['volume']):
-                                df.iloc[-1, df.columns.get_loc('volume')] = float(day_vol)
+                df = self._sync_intraday_candle(clean_symbol, df)
             except Exception:
                 pass
 
@@ -125,10 +182,10 @@ class YahooFinanceProvider(BaseDataProvider):
                 df = self._convert_to_mcx_inr(clean_symbol, df)
 
             now_str = datetime.now(ist_tz).strftime("%I:%M:%S %p IST")
-            df.attrs["capture_time"] = f"{now_str} (Live)"
-            df.attrs["data_source"] = "Yahoo Finance (Live)"
-            self.symbol_timestamps[clean_symbol] = f"{now_str} (Live)"
-            self.symbol_sources[clean_symbol] = "Yahoo Finance (Live)"
+            df.attrs["capture_time"] = f"{now_str} (Live Direct)"
+            df.attrs["data_source"] = "Yahoo Finance (Live Direct)"
+            self.symbol_timestamps[clean_symbol] = f"{now_str} (Live Direct)"
+            self.symbol_sources[clean_symbol] = "Yahoo Finance (Live Direct)"
             self.last_sync_time = now_str
 
             # Cache the result
@@ -199,6 +256,40 @@ class YahooFinanceProvider(BaseDataProvider):
 
     def fetch_quote(self, symbol: str) -> Optional[dict]:
         clean = UniverseManager.to_clean_symbol(symbol)
+        # 1. Try direct ultra-fast v8 quote
+        try:
+            v8_q = self._fetch_direct_v8_quote(clean)
+            if v8_q and v8_q.get("last_price"):
+                last_price = v8_q["last_price"]
+                prev_close = v8_q.get("prev_close")
+                day_high = v8_q.get("day_high")
+                day_low = v8_q.get("day_low")
+
+                if UniverseManager.is_commodity(clean) and last_price:
+                    mult = UniverseManager.get_mcx_conversion_multiplier(clean, float(last_price))
+                    if abs(mult - 1.0) > 1e-4:
+                        last_price = round(float(last_price) * mult, 2)
+                        if prev_close:
+                            prev_close = round(float(prev_close) * mult, 2)
+                        if day_high:
+                            day_high = round(float(day_high) * mult, 2)
+                        if day_low:
+                            day_low = round(float(day_low) * mult, 2)
+
+                return {
+                    "symbol": clean,
+                    "last_price": last_price,
+                    "prev_close": prev_close,
+                    "day_high": day_high,
+                    "day_low": day_low,
+                    "fifty_two_week_high": day_high,
+                    "fifty_two_week_low": day_low,
+                    "change_pct": v8_q.get("change_pct", 0.0),
+                }
+        except Exception:
+            pass
+
+        # 2. Fallback to yfinance ticker.fast_info
         yf_symbol = UniverseManager.to_yfinance_symbol(symbol)
         try:
             t = yf.Ticker(yf_symbol)

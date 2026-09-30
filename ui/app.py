@@ -48,7 +48,7 @@ except Exception:
 
 # Guard against Streamlit Cloud stale in-memory module caching across git updates
 import importlib
-_APP_BUILD_SIG = "2026_09_29_macro_v6_clean"
+_APP_BUILD_SIG = "2026_09_30_realtime_v3"
 if sys.modules.get("__CURRENT_BUILD_SIG__") != _APP_BUILD_SIG:
     for mod_name in list(sys.modules.keys()):
         if any(mod_name == pkg or mod_name.startswith(pkg + ".") for pkg in ("core", "screeners", "ai", "providers")):
@@ -563,11 +563,11 @@ force_live_refresh = st.sidebar.checkbox(
 cache_ttl_option = st.sidebar.select_slider(
     "Data Freshness (Cache TTL)",
     options=["Live (0m)", "15m", "30m", "1h", "2h", "4h"],
-    value="15m",
-    help="Determines how long market data remains valid before querying live exchange feeds. During trading hours (9:15 AM - 3:30 PM), 'Live' or '15m' is recommended."
+    value="Live (0m)",
+    help="Determines how long market data remains valid before querying live exchange feeds. 'Live (0m)' guarantees zero lag and real-time prices directly from exchange feeds."
 )
 ttl_map = {"Live (0m)": 0.0, "15m": 0.25, "30m": 0.5, "1h": 1.0, "2h": 2.0, "4h": 4.0}
-cache_ttl = ttl_map.get(cache_ttl_option, 0.25)
+cache_ttl = ttl_map.get(cache_ttl_option, 0.0)
 bypass_cache_flag = force_live_refresh or (cache_ttl == 0.0)
 
 run_btn = st.sidebar.button("🔍 Run Live Market Screen", type="primary", use_container_width=True)
@@ -845,6 +845,14 @@ if run_btn or "cached_results" in st.session_state:
             f'</div>'
         )
         render_html(active_banner_html)
+
+    # 1-Click Live Resync Action
+    btn_c1, btn_c2 = st.columns([3, 1])
+    with btn_c2:
+        if st.button("⚡ Force Live Resync", key="btn_dash_live_resync", help="Clears memory and pulls fresh live quotes from exchange feeds immediately", use_container_width=True):
+            st.session_state.pop("cached_results", None)
+            st.session_state.pop("data_dict", None)
+            st.rerun()
 
     # Top KPI Row (5 columns)
     kpi1, kpi2, kpi3, kpi4, kpi5 = st.columns(5)

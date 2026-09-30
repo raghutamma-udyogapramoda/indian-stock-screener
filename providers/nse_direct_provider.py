@@ -176,16 +176,20 @@ class NSEDirectProvider(BaseDataProvider):
 
         # 1. Load from cache
         missing = []
+        ist_tz = timezone(timedelta(hours=5, minutes=30))
+        now_ist = datetime.now(ist_tz)
         for s in clean_symbols:
             if UniverseManager.is_commodity(s):
                 continue
             df = self.cache.get(s) if use_cache else None
-            if df is None:
-                # Emergency cache fallback
-                any_c = self.cache.get_any(s)
-                if any_c:
-                    df = any_c[0]
             if df is not None and len(df) >= 30:
+                # If during trading session, synchronize today's candle with live exchange price
+                if now_ist.weekday() < 5 and now_ist.hour >= 9:
+                    try:
+                        from providers.yfinance_provider import YahooFinanceProvider
+                        df = YahooFinanceProvider(cache_ttl_hours=self.cache.ttl_hours)._sync_intraday_candle(s, df)
+                    except Exception:
+                        pass
                 results[s] = df.copy()
             else:
                 missing.append(s)
