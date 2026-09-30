@@ -635,8 +635,14 @@ def execute_screening(u_name, custom_list, strat, top_limit, prov_mode, b_key=""
         macro_context = MacroMarketEngine._get_default_macro_dict()
 
     # 4. Extract data health telemetry from providers
-    p_health = provider.get_health_status() if hasattr(provider, "get_health_status") else {}
-    idx_health = yf_idx_prov.get_health_status() if hasattr(yf_idx_prov, "get_health_status") else {}
+    try:
+        p_health = provider.get_health_status() if hasattr(provider, "get_health_status") else {}
+    except Exception:
+        p_health = {}
+    try:
+        idx_health = yf_idx_prov.get_health_status() if hasattr(yf_idx_prov, "get_health_status") else {}
+    except Exception:
+        idx_health = {}
 
     api_call_failed = p_health.get("api_call_failed", False) or idx_health.get("api_call_failed", False)
     failed_syms = sorted(list(set(p_health.get("failed_symbols", []) + idx_health.get("failed_symbols", []))))

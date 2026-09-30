@@ -18,6 +18,7 @@ class BaseDataProvider(ABC):
         self.api_failure_reasons: List[str] = []
         self.failed_symbols: List[str] = []
         self.fallback_symbols: List[str] = []
+        self.live_symbols: List[str] = []
         self.symbol_timestamps: Dict[str, str] = {}
         self.symbol_sources: Dict[str, str] = {}
         self.last_sync_time: Optional[str] = None
@@ -37,20 +38,29 @@ class BaseDataProvider(ABC):
 
     def get_health_status(self) -> dict:
         """Returns comprehensive data health and API connectivity status."""
+        failed = getattr(self, "failed_symbols", []) or []
+        fallback = getattr(self, "fallback_symbols", []) or []
+        live = getattr(self, "live_symbols", []) or []
+        reasons = getattr(self, "api_failure_reasons", []) or []
+        stamps = getattr(self, "symbol_timestamps", {}) or {}
+        sources = getattr(self, "symbol_sources", {}) or {}
+        api_failed = getattr(self, "api_call_failed", False)
+        is_latest_flag = getattr(self, "is_latest", True) and not api_failed
+
         return {
-            "api_call_failed": self.api_call_failed,
-            "is_latest": self.is_latest and not self.api_call_failed,
-            "data_source_mode": self.data_source_mode,
-            "failure_reasons": list(dict.fromkeys(self.api_failure_reasons)),
-            "failed_symbols": sorted(list(set(self.failed_symbols))),
-            "fallback_symbols": sorted(list(set(self.fallback_symbols))),
-            "live_symbols": sorted(list(set(self.live_symbols))),
-            "failed_count": len(set(self.failed_symbols)),
-            "fallback_count": len(set(self.fallback_symbols)),
-            "live_count": len(set(self.live_symbols)),
-            "symbol_timestamps": self.symbol_timestamps,
-            "symbol_sources": self.symbol_sources,
-            "last_sync_time": self.last_sync_time,
+            "api_call_failed": api_failed,
+            "is_latest": is_latest_flag,
+            "data_source_mode": getattr(self, "data_source_mode", "LIVE"),
+            "failure_reasons": list(dict.fromkeys(reasons)),
+            "failed_symbols": sorted(list(set(failed))),
+            "fallback_symbols": sorted(list(set(fallback))),
+            "live_symbols": sorted(list(set(live))),
+            "failed_count": len(set(failed)),
+            "fallback_count": len(set(fallback)),
+            "live_count": len(set(live)),
+            "symbol_timestamps": stamps,
+            "symbol_sources": sources,
+            "last_sync_time": getattr(self, "last_sync_time", None),
         }
 
 
