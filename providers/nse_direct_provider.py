@@ -4,7 +4,7 @@ Fetches official exchange data directly from NSE India archives and web feeds wi
 Includes proprietary exchange metrics like Delivery Volume & Delivery Percentage.
 """
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import io
 from pathlib import Path
 from typing import Dict, List, Optional
@@ -110,9 +110,16 @@ class NSEDirectProvider(BaseDataProvider):
             from providers.yfinance_provider import YahooFinanceProvider
             return YahooFinanceProvider(cache_ttl_hours=self.cache.ttl_hours).fetch_ohlcv(clean, period=period, interval=interval, use_cache=use_cache)
 
+        ist_tz = timezone(timedelta(hours=5, minutes=30))
         # 1. Check local cache
         cached_df = self.cache.get(clean) if use_cache else None
         if cached_df is not None and len(cached_df) >= 30:
+            mtime = self.cache.get_mtime(clean)
+            m_str = datetime.fromtimestamp(mtime, ist_tz).strftime("%d-%b %I:%M %p IST") if mtime else "Cached"
+            cached_df.attrs["capture_time"] = f"{m_str} (Cached)"
+            cached_df.attrs["data_source"] = "Local Cache"
+            self.symbol_timestamps[clean] = f"{m_str} (Cached)"
+            self.symbol_sources[clean] = "Local Cache"
             return cached_df
 
         # 2. Backfill historical candles (essential for cloud deployments where disk cache is fresh)
@@ -138,6 +145,12 @@ class NSEDirectProvider(BaseDataProvider):
                         df.loc[dt, "delivery_pct"] = float(row.get("DELIV_PER", 0.0))
             except Exception:
                 pass
+            now_str = datetime.now(ist_tz).strftime("%I:%M:%S %p IST")
+            df.attrs["capture_time"] = f"{now_str} (NSE Direct)"
+            df.attrs["data_source"] = "NSE Direct (Enriched)"
+            self.symbol_timestamps[clean] = f"{now_str} (NSE Direct)"
+            self.symbol_sources[clean] = "NSE Direct (Enriched)"
+            self.last_sync_time = now_str
             self.cache.set(clean, df, ttl_hours=self.cache.ttl_hours)
             return df
 

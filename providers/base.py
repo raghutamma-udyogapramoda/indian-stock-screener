@@ -18,7 +18,9 @@ class BaseDataProvider(ABC):
         self.api_failure_reasons: List[str] = []
         self.failed_symbols: List[str] = []
         self.fallback_symbols: List[str] = []
-        self.live_symbols: List[str] = []
+        self.symbol_timestamps: Dict[str, str] = {}
+        self.symbol_sources: Dict[str, str] = {}
+        self.last_sync_time: Optional[str] = None
 
     def reset_status(self):
         """Resets status telemetry before a new screening batch."""
@@ -29,6 +31,9 @@ class BaseDataProvider(ABC):
         self.failed_symbols = []
         self.fallback_symbols = []
         self.live_symbols = []
+        self.symbol_timestamps = {}
+        self.symbol_sources = {}
+        self.last_sync_time = None
 
     def get_health_status(self) -> dict:
         """Returns comprehensive data health and API connectivity status."""
@@ -43,6 +48,9 @@ class BaseDataProvider(ABC):
             "failed_count": len(set(self.failed_symbols)),
             "fallback_count": len(set(self.fallback_symbols)),
             "live_count": len(set(self.live_symbols)),
+            "symbol_timestamps": self.symbol_timestamps,
+            "symbol_sources": self.symbol_sources,
+            "last_sync_time": self.last_sync_time,
         }
 
 

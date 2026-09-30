@@ -5,6 +5,7 @@ Run with: streamlit run ui/app.py
 """
 
 import time
+from datetime import datetime, timezone, timedelta
 import os
 import sys
 from pathlib import Path
@@ -559,8 +560,20 @@ force_live_refresh = st.sidebar.checkbox(
     help="Forces immediate fresh downloads from exchange servers, bypassing local disk cache."
 )
 
-cache_ttl = st.sidebar.slider("Cache Freshness (Hours)", min_value=1, max_value=24, value=4)
+cache_ttl_option = st.sidebar.select_slider(
+    "Data Freshness (Cache TTL)",
+    options=["Live (0m)", "15m", "30m", "1h", "2h", "4h"],
+    value="15m",
+    help="Determines how long market data remains valid before querying live exchange feeds. During trading hours (9:15 AM - 3:30 PM), 'Live' or '15m' is recommended."
+)
+ttl_map = {"Live (0m)": 0.0, "15m": 0.25, "30m": 0.5, "1h": 1.0, "2h": 2.0, "4h": 4.0}
+cache_ttl = ttl_map.get(cache_ttl_option, 0.25)
+bypass_cache_flag = force_live_refresh or (cache_ttl == 0.0)
+
 run_btn = st.sidebar.button("🔍 Run Live Market Screen", type="primary", use_container_width=True)
+
+if "data_health" in st.session_state and "refresh_timestamp" in st.session_state["data_health"]:
+    st.sidebar.caption(f"🕒 **Last Refreshed:** {st.session_state['data_health']['refresh_timestamp']}")
 
 if is_admin():
     if st.sidebar.button("👑 Admin Flush Cache & Memory", use_container_width=True):
@@ -580,7 +593,7 @@ st.title("📈 Indian Equities & Commodities AI Screener")
 st.caption("Quantitative Multi-Strategy Algorithmic Screener with Low-Cost AI Trade Plan Generation (NSE, BSE & MCX)")
 
 # Helper to run scan (disk-cached by LocalDataCache)
-def execute_screening(u_name, custom_list, strat, top_limit, prov_mode, b_key="", b_sec="", b_tok="", bypass_cache=False):
+def execute_screening(u_name, custom_list, strat, top_limit, prov_mode, b_key="", b_sec="", b_tok="", bypass_cache=False, cache_ttl=0.25):
     t_start = time.time()
     
     # 1. Load symbols
@@ -642,6 +655,11 @@ def execute_screening(u_name, custom_list, strat, top_limit, prov_mode, b_key=""
     is_static = "Static" in prov_mode or p_health.get("data_source_mode") == "STATIC_TEST"
     is_latest = (not api_call_failed) and (not is_static) and p_health.get("is_latest", True) and (len(data) > 0)
 
+    ist_tz = timezone(timedelta(hours=5, minutes=30))
+    now_ist = datetime.now(ist_tz)
+    refresh_timestamp_str = now_ist.strftime("%I:%M:%S %p IST, %d-%b-%Y")
+    refresh_time_short = now_ist.strftime("%I:%M:%S %p IST")
+
     data_health = {
         "is_latest": is_latest,
         "api_call_failed": api_call_failed,
@@ -651,6 +669,10 @@ def execute_screening(u_name, custom_list, strat, top_limit, prov_mode, b_key=""
         "fallback_symbols": fallback_syms,
         "failure_reasons": failure_reasons,
         "latest_data_date": latest_data_date,
+        "refresh_timestamp": refresh_timestamp_str,
+        "refresh_time_short": refresh_time_short,
+        "symbol_timestamps": p_health.get("symbol_timestamps", {}),
+        "symbol_sources": p_health.get("symbol_sources", {}),
         "total_symbols_requested": len(symbols),
         "total_symbols_loaded": len(data),
         "is_static_mode": is_static
@@ -693,7 +715,8 @@ if run_btn or "cached_results" in st.session_state:
                 breeze_api_key_in,
                 breeze_secret_key_in,
                 breeze_session_token_in,
-                force_live_refresh
+                bypass_cache=bypass_cache_flag,
+                cache_ttl=cache_ttl
             )
             st.session_state["symbols"] = symbols
             st.session_state["data_dict"] = data_dict
@@ -803,14 +826,22 @@ if run_btn or "cached_results" in st.session_state:
                 if data_health.get("fallback_symbols"):
                     st.write(f"**Loaded from Fallback Cache ({len(data_health['fallback_symbols'])}):** {', '.join(data_health['fallback_symbols'][:30])}")
     else:
+        refresh_ts = data_health.get("refresh_timestamp", "Recent")
         active_banner_html = (
             f'<div style="background: linear-gradient(90deg, #064e3b 0%, #047857 100%); border: 1px solid #10B981; '
-            f'border-radius: 8px; padding: 8px 16px; margin-top: 8px; margin-bottom: 18px; display: flex; '
-            f'align-items: center; justify-content: space-between;">'
-            f'<div style="color: #ECFDF5; font-size: 0.9rem; font-weight: 600;">'
-            f'🟢 <b>Live Data Feed Active</b> — Successfully connected to {data_health.get("provider_name", provider_choice)}. Data is latest (session: {data_health.get("latest_data_date", "today")}).'
+            f'border-radius: 8px; padding: 10px 18px; margin-top: 8px; margin-bottom: 18px; display: flex; '
+            f'align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 10px;">'
+            f'<div>'
+            f'<div style="color: #ECFDF5; font-size: 0.95rem; font-weight: 700;">'
+            f'🟢 <b>Live Data Feed Active</b> — {data_health.get("provider_name", provider_choice)}'
             f'</div>'
-            f'<div style="color: #A7F3D0; font-size: 0.8rem;">Exchange Connection: Verified</div>'
+            f'<div style="color: #A7F3D0; font-size: 0.82rem; margin-top: 3px;">'
+            f'⏰ <b>Source Data Captured / Refreshed at:</b> <span style="background: rgba(0,0,0,0.3); padding: 2px 7px; border-radius: 4px; font-weight: bold; color: #FFF;">{refresh_ts}</span> &nbsp;|&nbsp; Session: <b>{data_health.get("latest_data_date", "Today")}</b>'
+            f'</div>'
+            f'</div>'
+            f'<div style="color: #6EE7B7; font-size: 0.8rem; background: rgba(0,0,0,0.25); padding: 4px 10px; border-radius: 4px; border: 1px solid rgba(110,231,183,0.3);">'
+            f'📡 Exchange Sync: <b>Verified Real-Time</b>'
+            f'</div>'
             f'</div>'
         )
         render_html(active_banner_html)
@@ -827,9 +858,9 @@ if run_btn or "cached_results" in st.session_state:
         delta_color="normal" if is_live else "inverse"
     )
     kpi5.metric(
-        "Market Session Date",
-        data_health.get("latest_data_date", "N/A"),
-        delta="Live Feed" if is_live else "From Cache",
+        "Source Capture Time",
+        data_health.get("refresh_time_short", data_health.get("latest_data_date", "N/A")),
+        delta=f"Session: {data_health.get('latest_data_date', 'Today')}",
         delta_color="normal" if is_live else "off"
     )
 
@@ -1200,7 +1231,10 @@ if run_btn or "cached_results" in st.session_state:
                         f'<div style="display: flex; justify-content: space-between; align-items: center;">'
                         f'<div>'
                         f'<h3 style="margin: 0; color: #FFF; font-size: 1.35rem;">{d_sym} <span style="font-size: 0.85rem; color: #94A3B8;">({c.get("sector", "Broad Market")})</span></h3>'
-                        f'<span style="font-size: 0.85rem; color: #CBD5E0;">LTP: <b style="color: #FFF;">₹{c.get("close", 0.0):,.2f}</b> (<b style="color: {chg_color};">{d_chg:+.2f}%</b>)</span>'
+                        f'<div style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 3px;">'
+                        f'<span style="font-size: 0.88rem; color: #CBD5E0;">LTP: <b style="color: #FFF; font-size: 1.05rem;">₹{c.get("close", 0.0):,.2f}</b> (<b style="color: {chg_color};">{d_chg:+.2f}%</b>)</span>'
+                        f'<span style="background: #1e293b; color: #38BDF8; border: 1px solid rgba(56,189,248,0.3); font-size: 0.72rem; padding: 2px 7px; border-radius: 4px;">⏰ Captured: {c.get("capture_time", data_health.get("refresh_time_short", "Live"))}</span>'
+                        f'</div>'
                         f'</div>'
                         f'<span style="background-color: #064e3b; color: #34D399; border: 1px solid #10B981; padding: 4px 10px; border-radius: 4px; font-weight: bold; font-size: 0.8rem;">Score: {c.get("score")}/100</span>'
                         f'</div>'
@@ -1531,6 +1565,7 @@ if run_btn or "cached_results" in st.session_state:
                         "Score": c["score"],
                         "LTP (₹)": f"₹{c['close']:,.2f}{comm_unit}" if comm_unit else c["close"],
                         "Change %": f"{c['change_pct']:+.2f}%",
+                        "Quote Captured": c.get("capture_time", data_health.get("refresh_time_short", "Live")),
                         "50% Retest Level": retest_str,
                         "Sector Tailwind": tailwind_badge,
                         "Panic Resilient": panic_badge,
@@ -1751,15 +1786,29 @@ if run_btn or "cached_results" in st.session_state:
             )
 
         # Interactive asset inspector
-        if all_candidates:
-            inspect_sym = st.selectbox("Select Asset to Audit", [c['symbol'] for c in all_candidates], key="audit_sym_picker")
+        avail_audit_syms = sorted(list(data_dict.keys())) if data_dict else [c['symbol'] for c in all_candidates]
+        if avail_audit_syms:
+            inspect_sym = st.selectbox("Select Asset to Audit", avail_audit_syms, key="audit_sym_picker")
             if inspect_sym in data_dict:
                 raw_df = data_dict[inspect_sym]
                 enriched_df = enrich_with_indicators(raw_df.copy())
                 last_candle = enriched_df.iloc[-1]
                 
+                c_time = raw_df.attrs.get("capture_time", data_health.get("refresh_timestamp", "Recent"))
+                d_src = raw_df.attrs.get("data_source", data_health.get("provider_name", "Live Market Feed"))
+                last_candle_dt = last_candle.name.strftime('%d-%b-%Y') if hasattr(last_candle.name, 'strftime') else str(last_candle.name)[:10]
+
+                st.markdown(
+                    f"<div style='background-color: #1e293b; border-left: 4px solid #38BDF8; padding: 10px 14px; border-radius: 6px; margin: 8px 0 14px 0; color: #E2E8F0; font-size: 0.9rem;'>"
+                    f"🕒 <b>Source Capture Timestamp:</b> <code style='color: #38BDF8; font-weight: bold;'>{c_time}</code> &nbsp;|&nbsp; "
+                    f"📡 <b>Data Feed:</b> <b>{d_src}</b> &nbsp;|&nbsp; "
+                    f"📅 <b>Latest Candlestick Session:</b> <b>{last_candle_dt}</b>"
+                    f"</div>",
+                    unsafe_allow_html=True
+                )
+                
                 c1, c2, c3, c4 = st.columns(4)
-                c1.metric("Close Price", f"₹{last_candle['close']:.2f}")
+                c1.metric("Close Price (LTP)", f"₹{last_candle['close']:.2f}", delta=c_time)
                 c2.metric("Relative Volume", f"{last_candle.get('rvol_20', 1.0):.2f}x")
                 c3.metric("RSI (14)", f"{last_candle.get('rsi_14', 50):.1f}")
                 c4.metric("CLV (Close Location)", f"{last_candle.get('clv', 0.5):.2f}")

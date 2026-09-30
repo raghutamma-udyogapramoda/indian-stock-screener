@@ -4,6 +4,7 @@ Provides zero-setup, free access to Indian market data (NSE & BSE) using yfinanc
 Ideal for weekend scans, 52-week high breakout analysis, and daily OHLCV backfilling.
 """
 
+from datetime import datetime, timezone, timedelta
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Dict, List, Optional
 import pandas as pd
@@ -37,16 +38,24 @@ class YahooFinanceProvider(BaseDataProvider):
              If file exists and is younger than TTL (e.g. 4 hours), returns immediately.
           3. Network Fetch: If cache expired/missing or bypassed, fetches daily OHLCV from Yahoo Finance.
           4. Standardization: Converts columns to lowercase ['open', 'high', 'low', 'close', 'volume'].
-          5. Failure Handling: If Yahoo Finance API fails, captures error reason, flags api_call_failed,
+          5. Real-Time Intraday Sync: Cross-checks fast_info to guarantee today's live LTP and avoid stale previous-close lag.
+          6. Failure Handling: If Yahoo Finance API fails, captures error reason, flags api_call_failed,
              and gracefully falls back to any existing cached parquet file on disk.
-          6. Cache Write: Stores fresh DataFrame to disk as columnar Parquet file.
+          7. Cache Write: Stores fresh DataFrame to disk as columnar Parquet file.
         """
         clean_symbol = UniverseManager.to_clean_symbol(symbol)
+        ist_tz = timezone(timedelta(hours=5, minutes=30))
         
         # 1. Try local cache (within TTL)
         if use_cache:
             cached_df = self.cache.get(clean_symbol)
             if cached_df is not None and len(cached_df) >= 30:
+                mtime = self.cache.get_mtime(clean_symbol)
+                mtime_str = datetime.fromtimestamp(mtime, ist_tz).strftime("%d-%b %I:%M %p IST") if mtime else "Cached"
+                cached_df.attrs["capture_time"] = f"{mtime_str} (Cached)"
+                cached_df.attrs["data_source"] = "Local Cache"
+                self.symbol_timestamps[clean_symbol] = f"{mtime_str} (Cached)"
+                self.symbol_sources[clean_symbol] = "Local Cache"
                 self.fallback_symbols.append(clean_symbol)
                 return cached_df
 
@@ -68,9 +77,59 @@ class YahooFinanceProvider(BaseDataProvider):
             df = df[required].copy()
             df = df.dropna()
 
+            # Real-Time Intraday Synchronization:
+            # yfinance daily history often omits or lags the current live intraday price during market hours.
+            # We synchronize with ticker.fast_info to guarantee real-time LTP accuracy.
+            try:
+                fast_info = getattr(ticker, "fast_info", None)
+                if fast_info:
+                    live_price = getattr(fast_info, "last_price", None) or getattr(fast_info, "regular_market_price", None)
+                    if live_price and float(live_price) > 0:
+                        live_price = float(live_price)
+                        day_open = getattr(fast_info, "open", None) or getattr(fast_info, "regular_market_open", None) or live_price
+                        day_high = getattr(fast_info, "day_high", None) or live_price
+                        day_low = getattr(fast_info, "day_low", None) or live_price
+                        day_vol = getattr(fast_info, "last_volume", None) or 0
+
+                        now_ist = datetime.now(ist_tz)
+                        today_ist_date = now_ist.date()
+                        
+                        last_ts = df.index[-1]
+                        last_date = last_ts.date() if hasattr(last_ts, "date") else None
+                        
+                        # If market has traded today (Monday-Friday) and last candle is from a previous session, append today's live bar
+                        if last_date and last_date < today_ist_date and now_ist.weekday() < 5 and now_ist.hour >= 9:
+                            today_tz = last_ts.tzinfo if hasattr(last_ts, "tzinfo") else None
+                            today_stamp = pd.Timestamp(now_ist.date(), tz=today_tz)
+                            df.loc[today_stamp] = {
+                                "open": float(day_open),
+                                "high": max(float(day_high), live_price),
+                                "low": min(float(day_low), live_price),
+                                "close": live_price,
+                                "volume": float(day_vol)
+                            }
+                        elif last_date and last_date == today_ist_date:
+                            # Update today's candle close with real-time LTP
+                            df.iloc[-1, df.columns.get_loc('close')] = live_price
+                            if day_high:
+                                df.iloc[-1, df.columns.get_loc('high')] = max(float(df.iloc[-1]['high']), float(day_high))
+                            if day_low:
+                                df.iloc[-1, df.columns.get_loc('low')] = min(float(df.iloc[-1]['low']), float(day_low))
+                            if day_vol and float(day_vol) > float(df.iloc[-1]['volume']):
+                                df.iloc[-1, df.columns.get_loc('volume')] = float(day_vol)
+            except Exception:
+                pass
+
             # If symbol is an MCX commodity, convert international futures prices to Indian MCX terms (INR)
             if UniverseManager.is_commodity(clean_symbol):
                 df = self._convert_to_mcx_inr(clean_symbol, df)
+
+            now_str = datetime.now(ist_tz).strftime("%I:%M:%S %p IST")
+            df.attrs["capture_time"] = f"{now_str} (Live)"
+            df.attrs["data_source"] = "Yahoo Finance (Live)"
+            self.symbol_timestamps[clean_symbol] = f"{now_str} (Live)"
+            self.symbol_sources[clean_symbol] = "Yahoo Finance (Live)"
+            self.last_sync_time = now_str
 
             # Cache the result
             if use_cache:
@@ -91,6 +150,12 @@ class YahooFinanceProvider(BaseDataProvider):
             if any_cache is not None:
                 fallback_df, age_h = any_cache
                 if len(fallback_df) >= 30:
+                    mtime = self.cache.get_mtime(clean_symbol)
+                    mtime_str = datetime.fromtimestamp(mtime, ist_tz).strftime("%d-%b %I:%M %p IST") if mtime else "Fallback Cache"
+                    fallback_df.attrs["capture_time"] = f"{mtime_str} (Fallback)"
+                    fallback_df.attrs["data_source"] = "Cached Fallback"
+                    self.symbol_timestamps[clean_symbol] = f"{mtime_str} (Fallback)"
+                    self.symbol_sources[clean_symbol] = "Cached Fallback"
                     self.fallback_symbols.append(clean_symbol)
                     self.is_latest = False
                     self.data_source_mode = "CACHED_FALLBACK"

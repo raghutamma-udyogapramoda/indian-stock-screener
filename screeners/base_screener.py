@@ -46,15 +46,26 @@ class BaseScreener(ABC):
             # Skip indices from stock screeners
             if symbol in ["NIFTY", "BANKNIFTY", "SENSEX", "MIDCPNIFTY", "NIFTYIT", "INDIAVIX", "^NSEI", "^NSEBANK", "^BSESN", "^CNXIT", "^INDIAVIX"]:
                 continue
+            def _enrich_candidate(c: dict, d: pd.DataFrame) -> dict:
+                if hasattr(d, "attrs"):
+                    if "capture_time" in d.attrs and "capture_time" not in c:
+                        c["capture_time"] = d.attrs["capture_time"]
+                    if "data_source" in d.attrs and "data_source" not in c:
+                        c["data_source"] = d.attrs["data_source"]
+                if "candle_date" not in c and d is not None and not d.empty and isinstance(d.index, pd.DatetimeIndex):
+                    last_idx = d.index[-1]
+                    c["candle_date"] = last_idx.strftime("%d-%b-%Y") if hasattr(last_idx, "strftime") else str(last_idx)[:10]
+                return c
+
             try:
                 candidate = self.screen(symbol, df, benchmark_data=benchmark_data)
                 if candidate:
-                    candidates.append(candidate)
+                    candidates.append(_enrich_candidate(candidate, df))
             except TypeError:
                 try:
                     candidate = self.screen(symbol, df)
                     if candidate:
-                        candidates.append(candidate)
+                        candidates.append(_enrich_candidate(candidate, df))
                 except Exception:
                     continue
             except Exception:

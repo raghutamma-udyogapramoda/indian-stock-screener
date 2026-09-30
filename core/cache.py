@@ -74,3 +74,10 @@ class LocalDataCache:
 
     def exists(self, symbol: str) -> bool:
         return self._get_path(symbol).exists()
+
+    def get_mtime(self, symbol: str) -> Optional[float]:
+        """Returns modification timestamp (st_mtime) of cached file if it exists."""
+        path = self._get_path(symbol)
+        if path.exists():
+            return path.stat().st_mtime
+        return None
