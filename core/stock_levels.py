@@ -12,7 +12,7 @@ import numpy as np
 import pandas as pd
 
 from core.indicators import enrich_with_indicators
-from core.relative_strength import SectorManager, MansfieldRelativeStrength
+from core.relative_strength import MarketIntelAnalyzer
 from core.universe import UniverseManager
 
 
@@ -165,7 +165,7 @@ class StockLevelAnalyzer:
             bias = "NEUTRAL"
 
         # Directional Trade Thesis
-        sector = SectorManager.get_sector(clean)
+        sector = MarketIntelAnalyzer.get_sector(clean)
         is_comm = UniverseManager.is_commodity(clean)
         unit = "pts" if is_comm else "₹"
 
@@ -204,7 +204,7 @@ class StockLevelAnalyzer:
         mrs_val = 0.0
         if benchmark_df is not None and len(benchmark_df) >= 20:
             try:
-                mrs_val = MansfieldRelativeStrength.compute_mansfield_rs(df, benchmark_df, length=50)
+                mrs_val, _ = MarketIntelAnalyzer.compute_mansfield_rs(df, benchmark_df, period=50)
             except Exception:
                 pass
 

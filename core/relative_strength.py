@@ -197,6 +197,12 @@ class MarketIntelAnalyzer:
         clean_sym = symbol.replace(".NS", "").replace(".BO", "").strip().upper()
         return STOCK_SECTOR_MAP.get(clean_sym, ("Broad Market", "NIFTY"))
 
+    @classmethod
+    def get_sector(cls, symbol: str) -> str:
+        """Returns just the sector name for a symbol."""
+        sector, _ = cls.get_stock_sector(symbol)
+        return sector
+
     @staticmethod
     def evaluate_retracement(df: pd.DataFrame, is_bullish: bool = True) -> dict:
         """
@@ -499,3 +505,8 @@ class MarketIntelAnalyzer:
             rs_trend = f"Lagging Benchmark (MRS: {latest_mrs:.1f}%)"
 
         return round(latest_mrs, 2), rs_trend
+
+
+# Backward-compatibility aliases
+SectorManager = MarketIntelAnalyzer
+MansfieldRelativeStrength = MarketIntelAnalyzer
