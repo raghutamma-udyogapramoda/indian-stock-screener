@@ -48,21 +48,41 @@ except Exception:
 
 # Guard against Streamlit Cloud stale in-memory module caching across git updates
 import importlib
-_APP_BUILD_SIG = "2026_09_30_realtime_v3"
+_APP_BUILD_SIG = "2026_09_30_realtime_v5_clean_df_fix"
 if sys.modules.get("__CURRENT_BUILD_SIG__") != _APP_BUILD_SIG:
     for mod_name in list(sys.modules.keys()):
         if any(mod_name == pkg or mod_name.startswith(pkg + ".") for pkg in ("core", "screeners", "ai", "providers")):
             sys.modules.pop(mod_name, None)
     sys.modules["__CURRENT_BUILD_SIG__"] = _APP_BUILD_SIG
 
-# Ensure core.universe and core.macro are strictly fresh
+# Ensure all core and screener modules are strictly fresh
 try:
     import core.universe
     import core.macro
+    import core.relative_strength
+    import core.stock_levels
+    import core.indicators
+    import core.tracker
     import screeners.dip_leaders
+    import screeners.breakout
+    import screeners.breakdown
+    import screeners.swing
+    import screeners.btst
+    import screeners.intraday
+    import screeners.options_fno
     importlib.reload(core.universe)
     importlib.reload(core.macro)
+    importlib.reload(core.relative_strength)
+    importlib.reload(core.stock_levels)
+    importlib.reload(core.indicators)
+    importlib.reload(core.tracker)
     importlib.reload(screeners.dip_leaders)
+    importlib.reload(screeners.breakout)
+    importlib.reload(screeners.breakdown)
+    importlib.reload(screeners.swing)
+    importlib.reload(screeners.btst)
+    importlib.reload(screeners.intraday)
+    importlib.reload(screeners.options_fno)
 except Exception:
     pass
 
@@ -706,7 +726,13 @@ def execute_screening(u_name, custom_list, strat, top_limit, prov_mode, b_key=""
     elif strat == "Options PE (Put Options Only)":
         results["OPTIONS_PE"] = OptionsScreener(option_target="PE").screen_batch(data, top_n=top_limit, benchmark_data=idx_raw)
 
-    custom_levels = StockLevelAnalyzer.analyze_batch(data, benchmark_data=idx_raw)
+    try:
+        custom_levels = StockLevelAnalyzer.analyze_batch(data, benchmark_data=idx_raw)
+    except Exception:
+        try:
+            custom_levels = StockLevelAnalyzer.analyze_batch(data, benchmark_data=None)
+        except Exception:
+            custom_levels = []
 
     # When custom universe is selected, ensure all custom stocks flow into results for AI Trade Plans
     if u_name == "Custom" and custom_levels:
