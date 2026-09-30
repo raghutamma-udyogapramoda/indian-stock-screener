@@ -48,7 +48,7 @@ except Exception:
 
 # Guard against Streamlit Cloud stale in-memory module caching across git updates
 import importlib
-_APP_BUILD_SIG = "2026_09_30_realtime_v6_twoway_bias_fix"
+_APP_BUILD_SIG = "2026_09_30_realtime_v7_ai_category_subtabs"
 if sys.modules.get("__CURRENT_BUILD_SIG__") != _APP_BUILD_SIG:
     for mod_name in list(sys.modules.keys()):
         if any(mod_name == pkg or mod_name.startswith(pkg + ".") for pkg in ("core", "screeners", "ai", "providers")):
@@ -1628,140 +1628,234 @@ if run_btn or "cached_results" in st.session_state:
             with st.spinner("Generating risk-reward evaluations, macro impact and trade thesis..."):
                 plans = advisor.analyze_candidates(all_candidates, macro_context=macro_context)
 
-            # Display cards in 2 columns
-            cols = st.columns(2)
-            for idx, p in enumerate(plans):
-                col = cols[idx % 2]
-                with col:
-                    action = p.get('trade_action', 'BUY').upper()
-                    is_bullish = ("BUY" in action or action == "LONG") and "PE" not in action
-                    badge_color = "#00E676" if is_bullish else "#FF5252"
-                    badge_text_color = "#000" if is_bullish else "#FFF"
-                    border_color = badge_color
+            if not plans:
+                st.info("No trade plans could be generated from current shortlisted candidates.")
+            else:
+                def _get_plan_cat_info(p_dict):
+                    raw_cat = str(p_dict.get("category", "")).upper()
+                    act = str(p_dict.get("trade_action", "")).upper()
 
-                    # Column labels based on trade direction (Shorts profit downward)
-                    t1_lbl = "Target 1 (Book 33%)" if is_bullish else "Downside T1 (Cover 33%)"
-                    t2_lbl = "Target 2 (Book 33%)" if is_bullish else "Downside T2 (Cover 33%)"
-                    t3_lbl = "Target 3 (Trail SL)" if is_bullish else "Downside T3 (Trail SL)"
-                    t4_lbl = "Target 4 (Extended)" if is_bullish else "Downside T4 (Extended)"
-                    sl_lbl = "Stop Loss (Base)" if is_bullish else "Stop Loss (Invalidation)"
+                    # 1. Options (PE / CE)
+                    if "PE" in act or ("OPTION" in raw_cat and ("PE" in raw_cat or "PUT" in raw_cat)):
+                        return ("BUY_PE", "🔴 Buy PE")
+                    if "CE" in act or ("OPTION" in raw_cat and ("CE" in raw_cat or "CALL" in raw_cat)):
+                        return ("BUY_CE", "🟢 Buy CE")
+                    if "OPTION" in raw_cat:
+                        return ("BUY_PE" if "SELL" in act else "BUY_CE", "🔴 Buy PE" if "SELL" in act else "🟢 Buy CE")
 
-                    # Commodity contract unit badge
-                    sym = p.get("symbol", "")
-                    unit_badge = ""
-                    if UniverseManager.is_commodity(sym):
-                        comm_map = {
-                            "GOLD": "MCX Futures (₹ / 10g)",
-                            "SILVER": "MCX Futures (₹ / kg)",
-                            "CRUDEOIL": "MCX Futures (₹ / bbl)",
-                            "NATURALGAS": "MCX Futures (₹ / mmBtu)",
-                            "COPPER": "MCX Futures (₹ / kg)",
-                            "ZINC": "MCX Futures (₹ / kg)",
-                            "ALUMINIUM": "MCX Futures (₹ / kg)",
-                        }
-                        unit_badge = f' | Contract: <b style="color: #FFD54F;">{comm_map.get(sym, "MCX Commodity")}</b>'
+                    # 2. Dip Leaders
+                    if raw_cat in ["DIP_LEADER", "DIP", "DIPLEADER", "SPRINGBOARD"]:
+                        return ("DIP_LEADER", "🚀 Dip Leader")
 
-                    macro_b = p.get("macro_badge", "")
-                    macro_badge_html = f' | <b style="color: #64B5F6;">{macro_b}</b>' if macro_b else ''
+                    # 3. Break Down
+                    if raw_cat in ["BREAKDOWN", "BREAK_DOWN", "SHORT"]:
+                        return ("BREAKDOWN", "📉 Break Down")
 
-                    # Short / Put option explainer banner
-                    short_banner = ""
-                    if not is_bullish:
-                        short_banner = (
-                            f'<div style="background-color: #2b0d10; border-left: 4px solid #FF5252; padding: 6px 12px; border-radius: 4px; font-size: 0.8rem; color: #FFCDD2; margin-bottom: 8px;">'
-                            f'<b>📉 Short / Bearish Setup:</b> Profit is booked as price declines below Entry (₹{p.get("entry_price")}) toward Downside Targets.'
-                            f'</div>'
-                        )
+                    # 4. Breakout
+                    if raw_cat in ["BREAKOUT", "BREAK_OUT"]:
+                        return ("BREAKOUT", "⚡ Breakout")
 
-                    macro_impact_banner = ""
-                    if macro_b:
-                        is_tailwind = "TAILWIND" in macro_b.upper() or "BENEFICIARY" in macro_b.upper()
-                        mb_color = "#10B981" if is_tailwind else "#F59E0B"
-                        mb_bg = "#064e3b33" if is_tailwind else "#78350f33"
-                        macro_impact_banner = (
-                            f'<div style="background-color: {mb_bg}; border-left: 4px solid {mb_color}; padding: 6px 12px; border-radius: 4px; font-size: 0.82rem; color: #E2E8F0; margin-bottom: 8px;">'
-                            f'<b>🌍 Macro Factor Impact:</b> {macro_b}'
-                            f'</div>'
-                        )
+                    # 5. Swing Pullback
+                    if raw_cat in ["SWING", "SWING_PULLBACK"]:
+                        return ("SWING", "🌊 Swing Pullback")
 
-                    trailing_badge = (
-                        f'<div style="background-color: #242000; border-left: 4px solid #FFD54F; padding: 8px 12px; border-radius: 4px; font-size: 0.82rem; color: #FFF8E1; margin-bottom: 8px;">'
-                        f'<b>💡 Trailing Playbook:</b> {p.get("trailing_playbook")}</div>'
-                    ) if p.get("trailing_playbook") else ''
+                    # 6. BTST Momentum
+                    if raw_cat in ["BTST", "STBT"]:
+                        return ("BTST", "🌙 BTST Momentum")
 
-                    thesis_clean = p.get('thesis', '').replace('"', '&quot;')
+                    # 7. Intraday
+                    if raw_cat in ["INTRADAY", "DAY_TRADE"]:
+                        return ("INTRADAY", "⏱️ Intraday")
 
-                    card_html = (
-                        f'<div style="background-color: #1a1e24; border-radius: 10px; padding: 18px; margin-bottom: 16px; border-left: 6px solid {border_color}; box-shadow: 0 4px 8px rgba(0,0,0,0.35);">'
-                        f'<div style="display: flex; justify-content: space-between; align-items: center;">'
-                        f'<h3 style="margin: 0; color: #FFF; font-size: 1.3rem;">{p.get("symbol")}</h3>'
-                        f'<span style="background-color: {badge_color}; color: {badge_text_color}; padding: 4px 12px; border-radius: 4px; font-weight: bold; font-size: 0.85rem;">{action}</span>'
-                        f'</div>'
-                        f'<p style="margin: 6px 0 10px 0; color: #8892B0; font-size: 0.85rem;">'
-                        f'Category: <b style="color: #64B5F6;">{p.get("category")}</b>{unit_badge}{macro_badge_html} | '
-                        f'Timeframe: <b style="color: #FFF;">{p.get("timeframe")}</b> | '
-                        f'Conviction: <b style="color: #FFD54F;">{p.get("conviction")}</b>'
-                        f'</p>'
-                        f'{short_banner}'
-                        f'{macro_impact_banner}'
-                        f'<div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; background-color: #0e1117; padding: 12px; border-radius: 6px; margin: 10px 0 6px 0;">'
-                        f'<div><span style="color: #888; font-size: 0.75rem;">Entry Trigger</span><br><b style="color: #FFF; font-size: 1.05rem;">₹{p.get("entry_price")}</b></div>'
-                        f'<div><span style="color: #888; font-size: 0.75rem;">{sl_lbl}</span><br><b style="color: #FF5252; font-size: 1.05rem;">₹{p.get("tight_stop_loss", p.get("stop_loss"))}</b><br><span style="font-size: 0.7rem; color: #A0AEC0;">Swing Floor: ₹{p.get("conservative_stop_loss", p.get("stop_loss"))}</span></div>'
-                        f'<div><span style="color: #888; font-size: 0.75rem;">{t1_lbl}</span><br><b style="color: #00E676; font-size: 1.05rem;">₹{p.get("target_1")}</b></div>'
-                        f'<div><span style="color: #888; font-size: 0.75rem;">{t2_lbl}</span><br><b style="color: #00E676; font-size: 1.05rem;">₹{p.get("target_2")}</b></div>'
-                        f'</div>'
-                        f'<div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; background-color: #12161f; padding: 8px 12px; border-radius: 6px; margin-bottom: 8px;">'
-                        f'<div><span style="color: #888; font-size: 0.75rem;">{t3_lbl}</span><br><b style="color: #64B5F6; font-size: 0.95rem;">₹{p.get("target_3", p.get("target_2"))}</b></div>'
-                        f'<div><span style="color: #888; font-size: 0.75rem;">{t4_lbl}</span><br><b style="color: #BA68C8; font-size: 0.95rem;">₹{p.get("target_4", p.get("target_2"))}</b></div>'
-                        f'<div><span style="color: #888; font-size: 0.75rem;">R:R Ratio</span><br><b style="color: #FFD54F; font-size: 0.85rem;">{p.get("risk_reward_ratio")}</b></div>'
-                        f'<div><span style="color: #888; font-size: 0.75rem;">Position Sizing</span><br><b style="color: #FFF; font-size: 0.85rem;">{p.get("shares_for_2k_risk", "—")} sh (₹2k risk)</b></div>'
-                        f'</div>'
-                        f'{trailing_badge}'
-                        f'<div style="margin: 8px 0 0 0; color: #E0E0E0; font-size: 0.88rem; line-height: 1.45;"><i>&ldquo;{thesis_clean}&rdquo;</i></div>'
-                        f'</div>'
-                    )
-                    render_html(card_html)
+                    # 8. Two-Way Action Levels
+                    if raw_cat in ["TWO_WAY_LEVELS", "STOCK_LEVELS", "LEVELS"]:
+                        return ("TWO_WAY_LEVELS", "🎯 Two-Way Levels")
 
-                    # Quick 1-click Add to Item Tracker
-                    current_user_name = get_current_user() or "trader"
-                    with st.expander(f"📌 Track {p.get('symbol')} in My Item Tracker"):
-                        with st.form(f"track_form_{idx}_{p.get('symbol')}", clear_on_submit=False):
-                            tr_c1, tr_c2 = st.columns(2)
-                            tr_buy = tr_c1.number_input("Entry Price (₹)", value=float(p.get("entry_price", 100.0)), key=f"tr_buy_{idx}")
-                            default_qty = 50.0
-                            sz = str(p.get("shares_for_2k_risk", ""))
-                            if sz.isdigit():
-                                default_qty = float(sz)
-                            tr_qty = tr_c2.number_input("Quantity / Units", value=default_qty, min_value=1.0, key=f"tr_qty_{idx}")
-                            
-                            tr_c3, tr_c4 = st.columns(2)
-                            raw_cat = str(p.get("category", "")).upper()
-                            def_type_idx = 0
-                            if "OPTION" in raw_cat or "PE" in action or "CE" in action:
-                                def_type_idx = 2 if "PE" in action else 1
-                            elif UniverseManager.is_commodity(p.get("symbol", "")):
-                                def_type_idx = 4
-                            tr_type = tr_c3.selectbox("Asset Type", ["EQUITY", "OPTION_CE", "OPTION_PE", "FUTURES", "COMMODITY", "INDEX"], index=def_type_idx, key=f"tr_type_{idx}")
-                            tr_sl = tr_c4.number_input("Stop Loss (₹)", value=float(p.get("tight_stop_loss", p.get("stop_loss", tr_buy * 0.95))), key=f"tr_sl_{idx}")
-                            
-                            tr_tgt = float(p.get("target_1", tr_buy * 1.10))
-                            tr_notes = f"{p.get('category')} setup - {p.get('thesis', '')[:80]}"
-                            
-                            tr_submit = st.form_submit_button(f"➕ Track {p.get('symbol')} in Live Portfolio", type="primary", use_container_width=True)
-                            if tr_submit:
-                                PortfolioTracker.add_position(
-                                    username=current_user_name,
-                                    symbol=p.get("symbol"),
-                                    buy_price=float(tr_buy),
-                                    qty=float(tr_qty),
-                                    asset_type=tr_type,
-                                    stop_loss=float(tr_sl),
-                                    target=float(tr_tgt),
-                                    notes=tr_notes
+                    if act == "SELL":
+                        return ("BREAKDOWN", "📉 Break Down")
+
+                    clean_name = raw_cat.replace("_", " ").title() if raw_cat else "General"
+                    return (raw_cat or "OTHER", f"📋 {clean_name}")
+
+                # Group plans into categories
+                plans_by_cat = {}
+                cat_labels = {}
+                for p in plans:
+                    ckey, clbl = _get_plan_cat_info(p)
+                    if ckey not in plans_by_cat:
+                        plans_by_cat[ckey] = []
+                        cat_labels[ckey] = clbl
+                    plans_by_cat[ckey].append(p)
+
+                # Desired presentation order matching user priority
+                preferred_order = [
+                    "BREAKDOWN",
+                    "DIP_LEADER",
+                    "BUY_PE",
+                    "BUY_CE",
+                    "BREAKOUT",
+                    "SWING",
+                    "BTST",
+                    "INTRADAY",
+                    "TWO_WAY_LEVELS"
+                ]
+                ordered_keys = [k for k in preferred_order if k in plans_by_cat]
+                for k in plans_by_cat:
+                    if k not in ordered_keys:
+                        ordered_keys.append(k)
+
+                # Reusable plan card rendering function with scoped widget keys
+                def _render_plans_cards_grid(plan_list, tab_prefix):
+                    if not plan_list:
+                        st.info("No trade setups available in this category.")
+                        return
+
+                    cols = st.columns(2)
+                    for idx, p in enumerate(plan_list):
+                        col = cols[idx % 2]
+                        with col:
+                            action = p.get('trade_action', 'BUY').upper()
+                            is_bullish = ("BUY" in action or action == "LONG") and "PE" not in action
+                            badge_color = "#00E676" if is_bullish else "#FF5252"
+                            badge_text_color = "#000" if is_bullish else "#FFF"
+                            border_color = badge_color
+
+                            # Column labels based on trade direction (Shorts profit downward)
+                            t1_lbl = "Target 1 (Book 33%)" if is_bullish else "Downside T1 (Cover 33%)"
+                            t2_lbl = "Target 2 (Book 33%)" if is_bullish else "Downside T2 (Cover 33%)"
+                            t3_lbl = "Target 3 (Trail SL)" if is_bullish else "Downside T3 (Trail SL)"
+                            t4_lbl = "Target 4 (Extended)" if is_bullish else "Downside T4 (Extended)"
+                            sl_lbl = "Stop Loss (Base)" if is_bullish else "Stop Loss (Invalidation)"
+
+                            # Commodity contract unit badge
+                            sym = p.get("symbol", "")
+                            unit_badge = ""
+                            if UniverseManager.is_commodity(sym):
+                                comm_map = {
+                                    "GOLD": "MCX Futures (₹ / 10g)",
+                                    "SILVER": "MCX Futures (₹ / kg)",
+                                    "CRUDEOIL": "MCX Futures (₹ / bbl)",
+                                    "NATURALGAS": "MCX Futures (₹ / mmBtu)",
+                                    "COPPER": "MCX Futures (₹ / kg)",
+                                    "ZINC": "MCX Futures (₹ / kg)",
+                                    "ALUMINIUM": "MCX Futures (₹ / kg)",
+                                }
+                                unit_badge = f' | Contract: <b style="color: #FFD54F;">{comm_map.get(sym, "MCX Commodity")}</b>'
+
+                            macro_b = p.get("macro_badge", "")
+                            macro_badge_html = f' | <b style="color: #64B5F6;">{macro_b}</b>' if macro_b else ''
+
+                            # Short / Put option explainer banner
+                            short_banner = ""
+                            if not is_bullish:
+                                short_banner = (
+                                    f'<div style="background-color: #2b0d10; border-left: 4px solid #FF5252; padding: 6px 12px; border-radius: 4px; font-size: 0.8rem; color: #FFCDD2; margin-bottom: 8px;">'
+                                    f'<b>📉 Short / Bearish Setup:</b> Profit is booked as price declines below Entry (₹{p.get("entry_price")}) toward Downside Targets.'
+                                    f'</div>'
                                 )
-                                st.toast(f"✅ Added {p.get('symbol')} to {current_user_name}'s Item Tracker!", icon="📌")
-                                time.sleep(0.4)
-                                st.rerun()
+
+                            macro_impact_banner = ""
+                            if macro_b:
+                                is_tailwind = "TAILWIND" in macro_b.upper() or "BENEFICIARY" in macro_b.upper()
+                                mb_color = "#10B981" if is_tailwind else "#F59E0B"
+                                mb_bg = "#064e3b33" if is_tailwind else "#78350f33"
+                                macro_impact_banner = (
+                                    f'<div style="background-color: {mb_bg}; border-left: 4px solid {mb_color}; padding: 6px 12px; border-radius: 4px; font-size: 0.82rem; color: #E2E8F0; margin-bottom: 8px;">'
+                                    f'<b>🌍 Macro Factor Impact:</b> {macro_b}'
+                                    f'</div>'
+                                )
+
+                            trailing_badge = (
+                                f'<div style="background-color: #242000; border-left: 4px solid #FFD54F; padding: 8px 12px; border-radius: 4px; font-size: 0.82rem; color: #FFF8E1; margin-bottom: 8px;">'
+                                f'<b>💡 Trailing Playbook:</b> {p.get("trailing_playbook")}</div>'
+                            ) if p.get("trailing_playbook") else ''
+
+                            thesis_clean = p.get('thesis', '').replace('"', '&quot;')
+
+                            card_html = (
+                                f'<div style="background-color: #1a1e24; border-radius: 10px; padding: 18px; margin-bottom: 16px; border-left: 6px solid {border_color}; box-shadow: 0 4px 8px rgba(0,0,0,0.35);">'
+                                f'<div style="display: flex; justify-content: space-between; align-items: center;">'
+                                f'<h3 style="margin: 0; color: #FFF; font-size: 1.3rem;">{p.get("symbol")}</h3>'
+                                f'<span style="background-color: {badge_color}; color: {badge_text_color}; padding: 4px 12px; border-radius: 4px; font-weight: bold; font-size: 0.85rem;">{action}</span>'
+                                f'</div>'
+                                f'<p style="margin: 6px 0 10px 0; color: #8892B0; font-size: 0.85rem;">'
+                                f'Category: <b style="color: #64B5F6;">{p.get("category")}</b>{unit_badge}{macro_badge_html} | '
+                                f'Timeframe: <b style="color: #FFF;">{p.get("timeframe")}</b> | '
+                                f'Conviction: <b style="color: #FFD54F;">{p.get("conviction")}</b>'
+                                f'</p>'
+                                f'{short_banner}'
+                                f'{macro_impact_banner}'
+                                f'<div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; background-color: #0e1117; padding: 12px; border-radius: 6px; margin: 10px 0 6px 0;">'
+                                f'<div><span style="color: #888; font-size: 0.75rem;">Entry Trigger</span><br><b style="color: #FFF; font-size: 1.05rem;">₹{p.get("entry_price")}</b></div>'
+                                f'<div><span style="color: #888; font-size: 0.75rem;">{sl_lbl}</span><br><b style="color: #FF5252; font-size: 1.05rem;">₹{p.get("tight_stop_loss", p.get("stop_loss"))}</b><br><span style="font-size: 0.7rem; color: #A0AEC0;">Swing Floor: ₹{p.get("conservative_stop_loss", p.get("stop_loss"))}</span></div>'
+                                f'<div><span style="color: #888; font-size: 0.75rem;">{t1_lbl}</span><br><b style="color: #00E676; font-size: 1.05rem;">₹{p.get("target_1")}</b></div>'
+                                f'<div><span style="color: #888; font-size: 0.75rem;">{t2_lbl}</span><br><b style="color: #00E676; font-size: 1.05rem;">₹{p.get("target_2")}</b></div>'
+                                f'</div>'
+                                f'<div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; background-color: #12161f; padding: 8px 12px; border-radius: 6px; margin-bottom: 8px;">'
+                                f'<div><span style="color: #888; font-size: 0.75rem;">{t3_lbl}</span><br><b style="color: #64B5F6; font-size: 0.95rem;">₹{p.get("target_3", p.get("target_2"))}</b></div>'
+                                f'<div><span style="color: #888; font-size: 0.75rem;">{t4_lbl}</span><br><b style="color: #BA68C8; font-size: 0.95rem;">₹{p.get("target_4", p.get("target_2"))}</b></div>'
+                                f'<div><span style="color: #888; font-size: 0.75rem;">R:R Ratio</span><br><b style="color: #FFD54F; font-size: 0.85rem;">{p.get("risk_reward_ratio")}</b></div>'
+                                f'<div><span style="color: #888; font-size: 0.75rem;">Position Sizing</span><br><b style="color: #FFF; font-size: 0.85rem;">{p.get("shares_for_2k_risk", "—")} sh (₹2k risk)</b></div>'
+                                f'</div>'
+                                f'{trailing_badge}'
+                                f'<div style="margin: 8px 0 0 0; color: #E0E0E0; font-size: 0.88rem; line-height: 1.45;"><i>&ldquo;{thesis_clean}&rdquo;</i></div>'
+                                f'</div>'
+                            )
+                            render_html(card_html)
+
+                            # Quick 1-click Add to Item Tracker with tab-prefixed unique keys
+                            current_user_name = get_current_user() or "trader"
+                            with st.expander(f"📌 Track {p.get('symbol')} in My Item Tracker"):
+                                with st.form(f"{tab_prefix}_tr_form_{idx}_{p.get('symbol')}", clear_on_submit=False):
+                                    tr_c1, tr_c2 = st.columns(2)
+                                    tr_buy = tr_c1.number_input("Entry Price (₹)", value=float(p.get("entry_price", 100.0)), key=f"{tab_prefix}_tr_buy_{idx}_{p.get('symbol')}")
+                                    default_qty = 50.0
+                                    sz = str(p.get("shares_for_2k_risk", ""))
+                                    if sz.isdigit():
+                                        default_qty = float(sz)
+                                    tr_qty = tr_c2.number_input("Quantity / Units", value=default_qty, min_value=1.0, key=f"{tab_prefix}_tr_qty_{idx}_{p.get('symbol')}")
+                                    
+                                    tr_c3, tr_c4 = st.columns(2)
+                                    raw_cat = str(p.get("category", "")).upper()
+                                    def_type_idx = 0
+                                    if "OPTION" in raw_cat or "PE" in action or "CE" in action:
+                                        def_type_idx = 2 if "PE" in action else 1
+                                    elif UniverseManager.is_commodity(p.get("symbol", "")):
+                                        def_type_idx = 4
+                                    tr_type = tr_c3.selectbox("Asset Type", ["EQUITY", "OPTION_CE", "OPTION_PE", "FUTURES", "COMMODITY", "INDEX"], index=def_type_idx, key=f"{tab_prefix}_tr_type_{idx}_{p.get('symbol')}")
+                                    tr_sl = tr_c4.number_input("Stop Loss (₹)", value=float(p.get("tight_stop_loss", p.get("stop_loss", tr_buy * 0.95))), key=f"{tab_prefix}_tr_sl_{idx}_{p.get('symbol')}")
+                                    
+                                    tr_tgt = float(p.get("target_1", tr_buy * 1.10))
+                                    tr_notes = f"{p.get('category')} setup - {p.get('thesis', '')[:80]}"
+                                    
+                                    tr_submit = st.form_submit_button(f"➕ Track {p.get('symbol')} in Live Portfolio", type="primary", use_container_width=True)
+                                    if tr_submit:
+                                        PortfolioTracker.add_position(
+                                            username=current_user_name,
+                                            symbol=p.get("symbol"),
+                                            buy_price=float(tr_buy),
+                                            qty=float(tr_qty),
+                                            asset_type=tr_type,
+                                            stop_loss=float(tr_sl),
+                                            target=float(tr_tgt),
+                                            notes=tr_notes
+                                        )
+                                        st.toast(f"✅ Added {p.get('symbol')} to {current_user_name}'s Item Tracker!", icon="📌")
+                                        time.sleep(0.4)
+                                        st.rerun()
+
+                # Build tab headers: Overview tab + Category sub-tabs
+                tab_headers = [f"🌟 All Plans ({len(plans)})"] + [f"{cat_labels[k]} ({len(plans_by_cat[k])})" for k in ordered_keys]
+                ai_sub_tabs = st.tabs(tab_headers)
+
+                # Render All Plans tab
+                with ai_sub_tabs[0]:
+                    _render_plans_cards_grid(plans, "all")
+
+                # Render Category sub tabs
+                for sub_i, cat_k in enumerate(ordered_keys, start=1):
+                    with ai_sub_tabs[sub_i]:
+                        _render_plans_cards_grid(plans_by_cat[cat_k], f"cat_{cat_k.lower()}")
 
     with tab_screeners:
         for cat, c_list in results.items():
