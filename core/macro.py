@@ -283,7 +283,7 @@ class MacroMarketEngine:
         bank_df = _get_df(["BANKNIFTY", "^NSEBANK"])
         vix_df = _get_df(["INDIAVIX", "^INDIAVIX"])
         crude_df = _get_df(["CRUDEOIL", "CL=F"])
-        gold_df = _get_df(["GOLD", "GC=F"])
+        gold_df = _get_df(["GOLDM", "GOLD", "GC=F"])
 
         # Fallback fetch if not present in benchmark_dict
         needed_missing = []
@@ -291,7 +291,7 @@ class MacroMarketEngine:
         if bank_df is None or len(bank_df) < 10: needed_missing.append("BANKNIFTY")
         if vix_df is None or len(vix_df) < 5: needed_missing.append("INDIAVIX")
         if crude_df is None or len(crude_df) < 10: needed_missing.append("CRUDEOIL")
-        if gold_df is None or len(gold_df) < 10: needed_missing.append("GOLD")
+        if gold_df is None or len(gold_df) < 10: needed_missing.append("GOLDM")
 
         if needed_missing:
             try:
@@ -302,7 +302,8 @@ class MacroMarketEngine:
                 if "BANKNIFTY" in fetched and fetched["BANKNIFTY"] is not None: bank_df = fetched["BANKNIFTY"]
                 if "INDIAVIX" in fetched and fetched["INDIAVIX"] is not None: vix_df = fetched["INDIAVIX"]
                 if "CRUDEOIL" in fetched and fetched["CRUDEOIL"] is not None: crude_df = fetched["CRUDEOIL"]
-                if "GOLD" in fetched and fetched["GOLD"] is not None: gold_df = fetched["GOLD"]
+                if "GOLDM" in fetched and fetched["GOLDM"] is not None: gold_df = fetched["GOLDM"]
+                elif "GOLD" in fetched and fetched["GOLD"] is not None: gold_df = fetched["GOLD"]
             except Exception:
                 pass
 

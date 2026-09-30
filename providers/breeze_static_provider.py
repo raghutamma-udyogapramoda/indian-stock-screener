@@ -115,6 +115,8 @@ class BreezeStaticProvider(BaseDataProvider):
     def ensure_sample_fixtures(self):
         """Creates sample Breeze API JSON fixtures for breakout, breakdown, and control assets."""
         fixtures = [
+            ("GOLDM", "BREAKOUT", 72000.0, 76500.0, 45000),       # MCX Gold Mini Breakout (~₹76,500 / 10g)
+            ("SILVERM", "CONSOLIDATION", 88000.0, 88200.0, 35000),# MCX Silver Mini (~₹88,200 / kg)
             ("GOLD", "BREAKOUT", 72000.0, 76500.0, 8000),         # MCX Commodity Breakout (~₹76,500 / 10g)
             ("TRENT", "BREAKOUT", 4200.0, 7250.0, 450000),        # NSE Equity Breakout
             ("CRUDEOIL", "BREAKDOWN", 6800.0, 5850.0, 12000),      # MCX Commodity Breakdown (~₹5,850 / bbl)
@@ -135,6 +137,8 @@ class BreezeStaticProvider(BaseDataProvider):
     def _generate_fixture(self, symbol: str) -> pd.DataFrame:
         """Generates and writes a default fixture if a requested symbol is missing."""
         comm_defaults = {
+            "GOLDM": (72000.0, 76500.0, 45000),
+            "SILVERM": (85000.0, 90200.0, 35000),
             "GOLD": (72000.0, 76500.0, 8000),
             "SILVER": (85000.0, 90200.0, 15000),
             "CRUDEOIL": (6800.0, 5850.0, 12000),

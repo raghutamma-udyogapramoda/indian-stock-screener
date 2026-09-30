@@ -64,7 +64,7 @@ NSE_FO_SEED = [
 
 # Major liquid MCX commodity symbols
 MCX_COMMODITIES_SEED = [
-    "GOLD", "SILVER", "CRUDEOIL", "NATURALGAS", "COPPER", "ZINC", "ALUMINIUM"
+    "GOLDM", "SILVERM", "CRUDEOIL", "NATURALGAS", "COPPER", "ZINC", "ALUMINIUM", "GOLD", "SILVER"
 ]
 
 # Major Indian Market & Sectoral Indices
@@ -74,6 +74,8 @@ INDICES_SEED = [
 
 # Mapping MCX commodity symbols to Yahoo Finance futures / ETF tickers for fallback
 MCX_TO_YFINANCE = {
+    "GOLDM": "GC=F",
+    "SILVERM": "SI=F",
     "GOLD": "GC=F",
     "SILVER": "SI=F",
     "CRUDEOIL": "CL=F",
@@ -83,7 +85,15 @@ MCX_TO_YFINANCE = {
     "ALUMINIUM": "ALI=F",
 }
 
-YFINANCE_TO_MCX = {v: k for k, v in MCX_TO_YFINANCE.items()}
+YFINANCE_TO_MCX = {
+    "GC=F": "GOLDM",
+    "SI=F": "SILVERM",
+    "CL=F": "CRUDEOIL",
+    "NG=F": "NATURALGAS",
+    "HG=F": "COPPER",
+    "ZNC=F": "ZINC",
+    "ALI=F": "ALUMINIUM",
+}
 
 # Mapping Indian Indices to Yahoo Finance symbols
 INDEX_TO_YFINANCE = {
@@ -299,7 +309,13 @@ class UniverseManager:
     @staticmethod
     def to_clean_symbol(symbol: str) -> str:
         """Strips exchange suffixes (.NS, .BO, =F, ^) and returns clean base code."""
-        s = symbol.upper()
+        s = symbol.upper().strip()
+        # Normalization for Gold Mini and Silver Mini variations
+        s_norm = s.replace(" ", "").replace("-", "").replace("_", "")
+        if s_norm in ["GOLDM", "GOLDMINI"]:
+            return "GOLDM"
+        if s_norm in ["SILVERM", "SILVERMINI"]:
+            return "SILVERM"
         if s in YFINANCE_TO_INDEX:
             return YFINANCE_TO_INDEX[s]
         if s in YFINANCE_TO_MCX:
@@ -312,8 +328,10 @@ class UniverseManager:
         """Returns standard official Multi Commodity Exchange of India (MCX) contract quotation unit."""
         clean = UniverseManager.to_clean_symbol(symbol)
         units = {
-            "GOLD": "₹ / 10g",
-            "SILVER": "₹ / kg",
+            "GOLDM": "₹ / 10g (Mini 100g Lot)",
+            "SILVERM": "₹ / kg (Mini 5kg Lot)",
+            "GOLD": "₹ / 10g (1kg Lot)",
+            "SILVER": "₹ / kg (30kg Lot)",
             "CRUDEOIL": "₹ / bbl",
             "NATURALGAS": "₹ / mmBtu",
             "COPPER": "₹ / kg",
@@ -351,8 +369,8 @@ class UniverseManager:
         quotation units and INR (₹).
 
         Contract specifications:
-          - GOLD (MCX: ₹ / 10g): COMEX GC=F ($/troy oz) * (10 / 31.1034768) * USDINR * 1.10 (customs duty + AIDC landed parity)
-          - SILVER (MCX: ₹ / kg): COMEX SI=F ($/troy oz) * (1000 / 31.1034768) * USDINR * 1.15 (import tariff landed parity)
+          - GOLD / GOLDM (MCX: ₹ / 10g): COMEX GC=F ($/troy oz) * (10 / 31.1034768) * USDINR * 1.10 (customs duty + AIDC landed parity)
+          - SILVER / SILVERM (MCX: ₹ / kg): COMEX SI=F ($/troy oz) * (1000 / 31.1034768) * USDINR * 1.15 (import tariff landed parity)
           - CRUDEOIL (MCX: ₹ / bbl): NYMEX CL=F ($/bbl) * USDINR
           - NATURALGAS (MCX: ₹ / mmBtu): NYMEX NG=F ($/mmBtu) * USDINR
           - COPPER (MCX: ₹ / kg): COMEX HG=F ($/lb) * 2.20462262 * USDINR
@@ -366,14 +384,14 @@ class UniverseManager:
         if usdinr is None:
             usdinr = UniverseManager.get_usdinr_rate()
 
-        if clean == "GOLD":
+        if clean in ["GOLD", "GOLDM"]:
             # If price > 20000, it's already in MCX INR per 10g
             if raw_price > 20000:
                 return 1.0
             # Standard COMEX GC=F is $/Troy Oz
             return (10.0 / 31.1034768) * usdinr * 1.10
 
-        elif clean == "SILVER":
+        elif clean in ["SILVER", "SILVERM"]:
             # If price > 20000, it's already in MCX INR per kg
             if raw_price > 20000:
                 return 1.0

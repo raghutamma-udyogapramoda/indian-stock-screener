@@ -48,7 +48,7 @@ except Exception:
 
 # Guard against Streamlit Cloud stale in-memory module caching across git updates
 import importlib
-_APP_BUILD_SIG = "2026_09_30_realtime_v8_ai_header_ltp"
+_APP_BUILD_SIG = "2026_09_30_realtime_v9_goldm_silverm"
 if sys.modules.get("__CURRENT_BUILD_SIG__") != _APP_BUILD_SIG:
     for mod_name in list(sys.modules.keys()):
         if any(mod_name == pkg or mod_name.startswith(pkg + ".") for pkg in ("core", "screeners", "ai", "providers")):
@@ -537,14 +537,14 @@ universe_choice = st.sidebar.selectbox(
     "Select Asset Universe",
     ["NIFTY_50", "🏛️ INDICES (NIFTY, BankNifty, Sensex...)", "NSE_FO", "NIFTY_500", "MCX Commodities", "Custom"],
     index=0,
-    help="NIFTY_50: Top 50 bluechips. INDICES: Nifty, BankNifty, Sensex, Midcap, Sectoral indices. NSE_FO: 180+ liquid F&O stocks. MCX Commodities: Gold, Silver, Crude, Gas, Metals. NIFTY_500: Broad market."
+    help="NIFTY_50: Top 50 bluechips. INDICES: Nifty, BankNifty, Sensex, Midcap, Sectoral indices. NSE_FO: 180+ liquid F&O stocks. MCX Commodities: Gold M, Silver Mini, Crude, Gas, Metals. NIFTY_500: Broad market."
 )
 
 custom_tickers = ""
 if universe_choice == "Custom":
     custom_tickers = st.sidebar.text_area(
         "Enter Tickers (comma separated)",
-        "RELIANCE, TCS, INFY, TMPV, HDFCBANK, AXISBANK, TRENT, BEL, GOLD, CRUDEOIL"
+        "RELIANCE, TCS, INFY, TMPV, HDFCBANK, AXISBANK, TRENT, BEL, GOLDM, SILVERM, CRUDEOIL"
     )
 
 strategy_choice = st.sidebar.selectbox(
@@ -645,7 +645,7 @@ def execute_screening(u_name, custom_list, strat, top_limit, prov_mode, b_key=""
         data = provider.fetch_batch_ohlcv(symbols, period="1y", interval="1d", max_workers=15, use_cache=not bypass_cache)
     
     # 3. Always compute Indian Market Indices Derivatives Hub & Global Macro Regime
-    idx_symbols = ["NIFTY", "BANKNIFTY", "SENSEX", "MIDCPNIFTY", "NIFTYIT", "CRUDEOIL", "GOLD"]
+    idx_symbols = ["NIFTY", "BANKNIFTY", "SENSEX", "MIDCPNIFTY", "NIFTYIT", "CRUDEOIL", "GOLDM", "GOLD"]
     yf_idx_prov = YahooFinanceProvider(cache_ttl_hours=cache_ttl)
     idx_raw = yf_idx_prov.fetch_batch_ohlcv(idx_symbols, period="6mo", interval="1d", max_workers=5, use_cache=not bypass_cache)
     index_results = IndexDerivativesAnalyzer.analyze_batch(idx_raw)
@@ -1732,6 +1732,8 @@ if run_btn or "cached_results" in st.session_state:
                             unit_badge = ""
                             if UniverseManager.is_commodity(sym):
                                 comm_map = {
+                                    "GOLDM": "MCX Gold Mini (₹ / 10g)",
+                                    "SILVERM": "MCX Silver Mini (₹ / kg)",
                                     "GOLD": "MCX Futures (₹ / 10g)",
                                     "SILVER": "MCX Futures (₹ / kg)",
                                     "CRUDEOIL": "MCX Futures (₹ / bbl)",
@@ -1740,7 +1742,7 @@ if run_btn or "cached_results" in st.session_state:
                                     "ZINC": "MCX Futures (₹ / kg)",
                                     "ALUMINIUM": "MCX Futures (₹ / kg)",
                                 }
-                                unit_badge = f' | Contract: <b style="color: #FFD54F;">{comm_map.get(sym, "MCX Commodity")}</b>'
+                                unit_badge = f' | Contract: <b style="color: #FFD54F;">{comm_map.get(sym, UniverseManager.get_commodity_unit(sym))}</b>'
 
                             macro_b = p.get("macro_badge", "")
                             macro_badge_html = f' | <b style="color: #64B5F6;">{macro_b}</b>' if macro_b else ''
@@ -1906,6 +1908,8 @@ if run_btn or "cached_results" in st.session_state:
                     sym_c = c["symbol"]
                     if UniverseManager.is_commodity(sym_c):
                         comm_unit_map = {
+                            "GOLDM": " (₹/10g Mini)",
+                            "SILVERM": " (₹/kg Mini)",
                             "GOLD": " (₹/10g)",
                             "SILVER": " (₹/kg)",
                             "CRUDEOIL": " (₹/bbl)",
@@ -1914,7 +1918,7 @@ if run_btn or "cached_results" in st.session_state:
                             "ZINC": " (₹/kg)",
                             "ALUMINIUM": " (₹/kg)",
                         }
-                        comm_unit = comm_unit_map.get(sym_c, " (MCX)")
+                        comm_unit = comm_unit_map.get(sym_c, f" ({UniverseManager.get_commodity_unit(sym_c)})")
 
                     row = {
                         "Symbol": c["symbol"],
@@ -1966,6 +1970,8 @@ if run_btn or "cached_results" in st.session_state:
                 comm_chart_tag = ""
                 if UniverseManager.is_commodity(selected_sym):
                     comm_chart_map = {
+                        "GOLDM": " (MCX Gold Mini ₹ / 10g)",
+                        "SILVERM": " (MCX Silver Mini ₹ / kg)",
                         "GOLD": " (MCX ₹ / 10g)",
                         "SILVER": " (MCX ₹ / kg)",
                         "CRUDEOIL": " (MCX ₹ / bbl)",
@@ -1974,7 +1980,7 @@ if run_btn or "cached_results" in st.session_state:
                         "ZINC": " (MCX ₹ / kg)",
                         "ALUMINIUM": " (MCX ₹ / kg)",
                     }
-                    comm_chart_tag = comm_chart_map.get(selected_sym, " (MCX)")
+                    comm_chart_tag = comm_chart_map.get(selected_sym, f" ({UniverseManager.get_commodity_unit(selected_sym)})")
 
                 fig = make_subplots(
                     rows=2, cols=1,
