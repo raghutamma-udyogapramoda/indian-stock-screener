@@ -72,6 +72,7 @@ from core.macro import MacroMarketEngine
 from core.tracker import PortfolioTracker
 from core.universe import UniverseManager
 from core.indicators import enrich_with_indicators
+from core.stock_levels import StockLevelAnalyzer
 from providers.breeze_provider import BreezeProvider
 from providers.breeze_static_provider import BreezeStaticProvider
 from providers.nse_direct_provider import NSEDirectProvider
@@ -699,14 +700,53 @@ def execute_screening(u_name, custom_list, strat, top_limit, prov_mode, b_key=""
     elif strat == "Options PE (Put Options Only)":
         results["OPTIONS_PE"] = OptionsScreener(option_target="PE").screen_batch(data, top_n=top_limit, benchmark_data=idx_raw)
 
+    custom_levels = StockLevelAnalyzer.analyze_batch(data, benchmark_data=idx_raw)
+
+    # When custom universe is selected, ensure all custom stocks flow into results for AI Trade Plans
+    if u_name == "Custom" and custom_levels:
+        custom_cands = []
+        for cl in custom_levels:
+            custom_cands.append({
+                "symbol": cl["symbol"],
+                "category": "TWO_WAY_LEVELS",
+                "bias": "LONG" if "BULL" in cl["bias"] else ("SHORT" if "BEAR" in cl["bias"] else "LONG"),
+                "score": 90.0 if "ACTIVE" in cl["status"] else (75.0 if "TESTING" in cl["status"] else 65.0),
+                "close": cl["close"],
+                "change_pct": cl["change_pct"],
+                "rvol": cl["rvol"],
+                "rvol_9": cl["rvol"],
+                "vol_confirmed_2x": cl["rvol"] >= 2.0,
+                "retest_support_50pct": cl["fall_below"],
+                "retracement_healthy": True,
+                "sector": cl["sector"],
+                "has_sector_tailwind": True,
+                "panic_day_resilient": False,
+                "mansfield_rs": cl["mansfield_rs"],
+                "rsi": cl["rsi"],
+                "reasons": [
+                    f"🟢 Rise Above: ₹{cl['rise_above']:,.2f} (Upside T1: ₹{cl['upside_target_1']:,.2f})",
+                    f"🔴 Fall Below: ₹{cl['fall_below']:,.2f} (Downside T1: ₹{cl['downside_target_1']:,.2f})",
+                    f"🟡 Range: {cl['chop_zone']}"
+                ],
+                "capture_time": cl["capture_time"],
+                "data_source": cl["data_source"],
+                "rise_above": cl["rise_above"],
+                "fall_below": cl["fall_below"],
+                "upside_target_1": cl["upside_target_1"],
+                "downside_target_1": cl["downside_target_1"],
+                "trade_thesis": cl["trade_thesis"],
+                "options_setup": cl["options_setup"]
+            })
+        results["TWO_WAY_LEVELS"] = custom_cands
+
     elapsed = time.time() - t_start
-    return symbols, data, results, index_results, elapsed, data_health, macro_context
+    return symbols, data, results, index_results, custom_levels, elapsed, data_health, macro_context
 
 
 if run_btn or "cached_results" in st.session_state:
     if run_btn:
         with st.spinner("Syncing candles, macro indicators & computing vectorized screeners..."):
-            symbols, data_dict, results, index_results, elapsed, data_health, macro_context = execute_screening(
+            symbols, data_dict, results, index_results, custom_levels, elapsed, data_health, macro_context = execute_screening(
                 universe_choice,
                 custom_tickers,
                 strategy_choice,
@@ -722,6 +762,7 @@ if run_btn or "cached_results" in st.session_state:
             st.session_state["data_dict"] = data_dict
             st.session_state["cached_results"] = results
             st.session_state["index_results"] = index_results
+            st.session_state["custom_levels"] = custom_levels
             st.session_state["elapsed"] = elapsed
             st.session_state["data_health"] = data_health
             st.session_state["macro_context"] = macro_context
@@ -730,6 +771,13 @@ if run_btn or "cached_results" in st.session_state:
     data_dict = st.session_state["data_dict"]
     results = st.session_state["cached_results"]
     index_results = st.session_state.get("index_results", [])
+    custom_levels = st.session_state.get("custom_levels", [])
+    if not custom_levels and data_dict:
+        try:
+            custom_levels = StockLevelAnalyzer.analyze_batch(data_dict)
+            st.session_state["custom_levels"] = custom_levels
+        except Exception:
+            pass
     elapsed = st.session_state["elapsed"]
     macro_context = st.session_state.get("macro_context")
     if not macro_context or not isinstance(macro_context, dict):
@@ -874,7 +922,10 @@ if run_btn or "cached_results" in st.session_state:
 
     st.markdown("---")
 
-    tab_indices, tab_dipleaders, tab_ai, tab_screeners, tab_tracker, tab_charts, tab_docs, tab_audit = st.tabs([
+    levels_tab_name = "🎯 Custom Stock Levels (Rise / Fall)" if universe_choice == "Custom" else "🎯 Two-Way Levels (Rise / Fall)"
+
+    tab_levels, tab_indices, tab_dipleaders, tab_ai, tab_screeners, tab_tracker, tab_charts, tab_docs, tab_audit = st.tabs([
+        levels_tab_name,
         "🏛️ Indices & Macros",
         "🚀 First-to-Recover Dip Leaders",
         "🤖 AI Trade Plans",
@@ -884,6 +935,148 @@ if run_btn or "cached_results" in st.session_state:
         "⚙️ Strategy Documentation",
         "🔍 API Data Audit & Proof"
     ])
+
+    with tab_levels:
+        st.subheader("🎯 Institutional Two-Way Action Levels (Rise Above / Fall Below)")
+        st.caption(
+            "Precision quantitative boundary thresholds: Identifies the exact level **ABOVE** which institutional buyers gain control "
+            "triggering an upside rally, the level **BELOW** which sellers break support triggering downward acceleration, "
+            "the neutral chop zone, and dynamic volatility-based targets / stop loss levels."
+        )
+
+        if not custom_levels:
+            st.info("ℹ️ No stock levels available. Enter custom stocks in the sidebar or run the screener to calculate two-way breakout and breakdown levels.")
+        else:
+            # 1. Summary Metrics
+            active_rises = sum(1 for x in custom_levels if "EXPANSION" in x["status"] or "RESISTANCE" in x["status"])
+            active_falls = sum(1 for x in custom_levels if "BREAKDOWN" in x["status"] or "SUPPORT" in x["status"])
+            consolidating = sum(1 for x in custom_levels if "CONSOLIDATING" in x["status"])
+
+            k1, k2, k3, k4 = st.columns(4)
+            k1.metric("Stocks Evaluated", f"{len(custom_levels)} Assets")
+            k2.metric("🟢 Testing / Above Rise Level", f"{active_rises} Setups", delta="Upside Momentum" if active_rises > 0 else "None")
+            k3.metric("🔴 Testing / Below Fall Level", f"{active_falls} Setups", delta="Downside Risk" if active_falls > 0 else "None", delta_color="inverse")
+            k4.metric("🟡 Consolidating (Chop Zone)", f"{consolidating} Setups")
+
+            st.markdown("---")
+
+            # 2. Executive Two-Way Levels Table
+            st.markdown("### 📋 Executive Action Levels Summary Table")
+            st.caption("Sort by distance to triggers to see which stocks are immediately pressing key action levels today.")
+            
+            levels_table = []
+            for s in custom_levels:
+                levels_table.append({
+                    "Symbol": s["symbol"],
+                    "Sector": s["sector"],
+                    "LTP (₹)": f"₹{s['close']:,.2f}",
+                    "Day Change": f"{s['change_pct']:+.2f}%",
+                    "🟢 RISE ABOVE": f"₹{s['rise_above']:,.2f}",
+                    "Rise Dist %": f"{s['rise_distance_pct']:+.2f}%",
+                    "Upside Targets": f"T1: ₹{s['upside_target_1']:,.2f} | T2: ₹{s['upside_target_2']:,.2f}",
+                    "Upside SL": f"₹{s['upside_stop_loss']:,.2f} ({s['upside_risk_reward']})",
+                    "Call Play (CE)": s["options_setup"]["call_option_play"] if s["options_setup"].get("is_fno") else "N/A (Cash)",
+                    "🔴 FALL BELOW": f"₹{s['fall_below']:,.2f}",
+                    "Fall Dist %": f"{s['fall_distance_pct']:+.2f}%",
+                    "Downside Targets": f"T1: ₹{s['downside_target_1']:,.2f} | T2: ₹{s['downside_target_2']:,.2f}",
+                    "Downside SL": f"₹{s['downside_stop_loss']:,.2f} ({s['downside_risk_reward']})",
+                    "Put Play (PE)": s["options_setup"]["put_option_play"] if s["options_setup"].get("is_fno") else "N/A (Cash)",
+                    "🟡 Chop Zone": s["chop_zone"],
+                    "Status": s["status"]
+                })
+            st.dataframe(pd.DataFrame(levels_table), use_container_width=True, hide_index=True)
+
+            st.markdown("---")
+
+            # 3. Deep-Dive Tactical Execution Cards
+            st.markdown("### 🔍 Deep-Dive Stock Execution Cards & 1-Click Tracker")
+            for idx_s, s in enumerate(custom_levels):
+                sym_name = s["symbol"]
+                close_p = s["close"]
+                chg = s["change_pct"]
+                chg_c = "#00E676" if chg >= 0 else "#FF5252"
+                b_color = s["status_color"]
+                
+                # Card HTML
+                card_html = (
+                    f'<div style="background-color: #1a1e24; border-radius: 10px; padding: 18px; margin-bottom: 16px; border-left: 6px solid {b_color}; box-shadow: 0 4px 12px rgba(0,0,0,0.35);">'
+                    f'<div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px;">'
+                    f'<div>'
+                    f'<h3 style="margin: 0; color: #FFF; font-size: 1.4rem;">{sym_name} <span style="font-size: 0.9rem; color: #94A3B8;">({s["sector"]})</span></h3>'
+                    f'<div style="display: flex; align-items: center; gap: 10px; margin-top: 4px; flex-wrap: wrap;">'
+                    f'<span style="font-size: 0.95rem; color: #E2E8F0;">LTP: <b style="color: #FFF; font-size: 1.15rem;">₹{close_p:,.2f}</b> (<b style="color: {chg_c};">{chg:+.2f}%</b>)</span>'
+                    f'<span style="background: #1e293b; color: #38BDF8; border: 1px solid rgba(56,189,248,0.3); font-size: 0.75rem; padding: 2px 8px; border-radius: 4px;">⏰ {s.get("capture_time", "Live")}</span>'
+                    f'<span style="color: #A0AEC0; font-size: 0.8rem;">RSI: <b>{s["rsi"]}</b> | ATR(14): <b>₹{s["atr"]:,.2f}</b> | RVol: <b>{s["rvol"]:.2f}x</b></span>'
+                    f'</div>'
+                    f'</div>'
+                    f'<div style="background-color: #0e1117; border: 1px solid {b_color}; color: {b_color}; padding: 6px 14px; border-radius: 6px; font-weight: bold; font-size: 0.85rem;">'
+                    f'{s["status"]}'
+                    f'</div>'
+                    f'</div>'
+                    f'<div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 14px; margin-top: 14px;">'
+                    f'<div style="background-color: #062b1a; border: 1px solid #10B981; border-radius: 8px; padding: 12px 14px;">'
+                    f'<div style="color: #34D399; font-weight: bold; font-size: 0.95rem; margin-bottom: 6px;">🟢 RALLY SETUP (BUY ABOVE ₹{s["rise_above"]:,.2f})</div>'
+                    f'<div style="color: #E2E8F0; font-size: 0.84rem; line-height: 1.5;">'
+                    f'• <b>Breakout Trigger:</b> ₹{s["rise_above"]:,.2f} ({s["rise_distance_pct"]:+.2f}% away)<br>'
+                    f'• <b>Target 1 (0.8x ATR):</b> <b style="color: #34D399;">₹{s["upside_target_1"]:,.2f}</b><br>'
+                    f'• <b>Target 2 (1.6x ATR):</b> <b style="color: #34D399;">₹{s["upside_target_2"]:,.2f}</b><br>'
+                    f'• <b>Target 3 (2.5x ATR):</b> <b style="color: #34D399;">₹{s["upside_target_3"]:,.2f}</b><br>'
+                    f'• <b>Stop Loss:</b> <b style="color: #F87171;">₹{s["upside_stop_loss"]:,.2f}</b> (R:R {s["upside_risk_reward"]})<br>'
+                    f'• <b>Option Play:</b> <code style="color: #A7F3D0;">{s["options_setup"]["call_option_play"]}</code>'
+                    f'</div>'
+                    f'</div>'
+                    f'<div style="background-color: #3b0d11; border: 1px solid #EF4444; border-radius: 8px; padding: 12px 14px;">'
+                    f'<div style="color: #F87171; font-weight: bold; font-size: 0.95rem; margin-bottom: 6px;">🔴 BREAKDOWN SETUP (SELL BELOW ₹{s["fall_below"]:,.2f})</div>'
+                    f'<div style="color: #E2E8F0; font-size: 0.84rem; line-height: 1.5;">'
+                    f'• <b>Breakdown Floor:</b> ₹{s["fall_below"]:,.2f} ({s["fall_distance_pct"]:+.2f}% away)<br>'
+                    f'• <b>Target 1 (0.8x ATR):</b> <b style="color: #F87171;">₹{s["downside_target_1"]:,.2f}</b><br>'
+                    f'• <b>Target 2 (1.6x ATR):</b> <b style="color: #F87171;">₹{s["downside_target_2"]:,.2f}</b><br>'
+                    f'• <b>Target 3 (2.5x ATR):</b> <b style="color: #F87171;">₹{s["downside_target_3"]:,.2f}</b><br>'
+                    f'• <b>Stop Loss:</b> <b style="color: #34D399;">₹{s["downside_stop_loss"]:,.2f}</b> (R:R {s["downside_risk_reward"]})<br>'
+                    f'• <b>Option Play:</b> <code style="color: #FECACA;">{s["options_setup"]["put_option_play"]}</code>'
+                    f'</div>'
+                    f'</div>'
+                    f'</div>'
+                    f'<div style="background-color: #131922; border-left: 3px solid #F59E0B; padding: 8px 12px; border-radius: 4px; margin-top: 10px; font-size: 0.85rem; color: #CBD5E0;">'
+                    f'<b>🟡 Range / Chop Zone:</b> <code>{s["chop_zone"]}</code> &nbsp;|&nbsp; <i>{s["thesis_neutral"]}</i>'
+                    f'</div>'
+                    f'</div>'
+                )
+                render_html(card_html)
+
+                # 1-Click Track Form (Long or Short)
+                current_user_name = get_current_user() or "trader"
+                with st.expander(f"📌 Track {sym_name} Action Triggers in Live Portfolio"):
+                    with st.form(f"track_level_form_{idx_s}_{sym_name}", clear_on_submit=False):
+                        tc1, tc2, tc3 = st.columns(3)
+                        t_dir = tc1.selectbox("Trade Direction", ["🟢 LONG (Breakout Above)", "🔴 SHORT (Breakdown Below)"], key=f"t_lvl_dir_{idx_s}")
+                        is_long = "LONG" in t_dir
+                        default_entry = s["rise_above"] if is_long else s["fall_below"]
+                        default_sl = s["upside_stop_loss"] if is_long else s["downside_stop_loss"]
+                        default_tgt = s["upside_target_1"] if is_long else s["downside_target_1"]
+                        
+                        t_entry = tc2.number_input("Trigger / Entry Price (₹)", value=float(default_entry), key=f"t_lvl_entry_{idx_s}")
+                        t_qty = tc3.number_input("Quantity / Units", value=50.0, min_value=1.0, key=f"t_lvl_qty_{idx_s}")
+                        
+                        tc4, tc5 = st.columns(2)
+                        t_type = tc4.selectbox("Asset Instrument", ["EQUITY", "OPTION_CE", "OPTION_PE", "FUTURES"], index=0 if is_long else 2, key=f"t_lvl_inst_{idx_s}")
+                        t_sl = tc5.number_input("Stop Loss (₹)", value=float(default_sl), key=f"t_lvl_sl_{idx_s}")
+                        
+                        t_btn = st.form_submit_button(f"➕ Add {sym_name} to Tracker", type="primary", use_container_width=True)
+                        if t_btn:
+                            PortfolioTracker.add_position(
+                                username=current_user_name,
+                                symbol=sym_name,
+                                asset_type=t_type,
+                                buy_price=float(t_entry),
+                                quantity=float(t_qty),
+                                stop_loss=float(t_sl),
+                                target=float(default_tgt),
+                                notes=f"Action Level setup ({s['status'][:30]})"
+                            )
+                            st.toast(f"✅ Added {sym_name} ({t_dir[:7]}) to {current_user_name}'s tracker!", icon="📌")
+                            time.sleep(0.4)
+                            st.rerun()
 
     with tab_indices:
         st.subheader("🏛️ Indian Market & Sectoral Indices Derivatives Hub")
@@ -1605,9 +1798,13 @@ if run_btn or "cached_results" in st.session_state:
 
     with tab_charts:
         st.subheader("Interactive Candlestick & Technical Inspector")
-        if all_candidates:
-            symbols_to_chart = list(dict.fromkeys([c["symbol"] for c in all_candidates]))
-            selected_sym = st.selectbox("Select Candidate to Inspect", symbols_to_chart)
+        all_chart_syms = list(dict.fromkeys(
+            [c["symbol"] for c in custom_levels] + 
+            [c["symbol"] for c in all_candidates] + 
+            list(data_dict.keys())
+        ))
+        if all_chart_syms:
+            selected_sym = st.selectbox("Select Candidate / Stock to Inspect", all_chart_syms)
             if selected_sym in data_dict:
                 df_chart = enrich_with_indicators(data_dict[selected_sym].tail(120).copy())
 
@@ -1628,7 +1825,7 @@ if run_btn or "cached_results" in st.session_state:
                     rows=2, cols=1,
                     shared_xaxes=True,
                     vertical_spacing=0.04,
-                    subplot_titles=(f"{selected_sym} — Price & Moving Averages{comm_chart_tag}", "Volume & RVol"),
+                    subplot_titles=(f"{selected_sym} — Two-Way Action Levels & Price Action{comm_chart_tag}", "Volume & RVol"),
                     row_heights=[0.75, 0.25]
                 )
 
@@ -1650,6 +1847,65 @@ if run_btn or "cached_results" in st.session_state:
                 if 'bb_upper' in df_chart.columns:
                     fig.add_trace(go.Scatter(x=df_chart.index, y=df_chart['bb_upper'], line=dict(color='gray', width=1, dash='dot'), name='BB Upper'), row=1, col=1)
                     fig.add_trace(go.Scatter(x=df_chart.index, y=df_chart['bb_lower'], line=dict(color='gray', width=1, dash='dot'), name='BB Lower'), row=1, col=1)
+
+                # Two-Way Action Levels Overlay (Rise Above / Fall Below / Chop Zone)
+                cand_levels = next((x for x in custom_levels if x["symbol"] == selected_sym), None)
+                if not cand_levels and selected_sym in data_dict:
+                    try:
+                        cand_levels = StockLevelAnalyzer.analyze_stock(selected_sym, data_dict[selected_sym])
+                    except Exception:
+                        cand_levels = None
+
+                if cand_levels:
+                    # Highlight Neutral Chop Range
+                    fig.add_hrect(
+                        y0=cand_levels['fall_below'],
+                        y1=cand_levels['rise_above'],
+                        fillcolor="rgba(255, 213, 79, 0.08)",
+                        line_width=1,
+                        line_color="rgba(255, 213, 79, 0.25)",
+                        annotation_text=f"Chop Zone (₹{cand_levels['fall_below']:,.1f} - ₹{cand_levels['rise_above']:,.1f})",
+                        annotation_position="top left",
+                        row=1, col=1
+                    )
+                    # Green line for Rise Above (Upside Trigger)
+                    fig.add_hline(
+                        y=cand_levels['rise_above'],
+                        line_dash="dash",
+                        line_color="#00E676",
+                        annotation_text=f"🟢 Rise Above: ₹{cand_levels['rise_above']:,.1f}",
+                        annotation_position="top right",
+                        row=1, col=1
+                    )
+                    # Red line for Fall Below (Downside Trigger)
+                    fig.add_hline(
+                        y=cand_levels['fall_below'],
+                        line_dash="dash",
+                        line_color="#FF5252",
+                        annotation_text=f"🔴 Fall Below: ₹{cand_levels['fall_below']:,.1f}",
+                        annotation_position="bottom right",
+                        row=1, col=1
+                    )
+                    # Upside T1
+                    if cand_levels.get('upside_target_1'):
+                        fig.add_hline(
+                            y=cand_levels['upside_target_1'],
+                            line_dash="dot",
+                            line_color="#69F0AE",
+                            annotation_text=f"Upside T1 (₹{cand_levels['upside_target_1']:,.1f})",
+                            annotation_position="top right",
+                            row=1, col=1
+                        )
+                    # Downside T1
+                    if cand_levels.get('downside_target_1'):
+                        fig.add_hline(
+                            y=cand_levels['downside_target_1'],
+                            line_dash="dot",
+                            line_color="#FF8A80",
+                            annotation_text=f"Downside T1 (₹{cand_levels['downside_target_1']:,.1f})",
+                            annotation_position="bottom right",
+                            row=1, col=1
+                        )
 
                 # Volume Bars
                 vol_colors = ['#00E676' if c >= o else '#FF5252' for c, o in zip(df_chart['close'], df_chart['open'])]
