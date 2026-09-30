@@ -48,7 +48,7 @@ except Exception:
 
 # Guard against Streamlit Cloud stale in-memory module caching across git updates
 import importlib
-_APP_BUILD_SIG = "2026_09_30_realtime_v7_ai_category_subtabs"
+_APP_BUILD_SIG = "2026_09_30_realtime_v8_ai_header_ltp"
 if sys.modules.get("__CURRENT_BUILD_SIG__") != _APP_BUILD_SIG:
     for mod_name in list(sys.modules.keys()):
         if any(mod_name == pkg or mod_name.startswith(pkg + ".") for pkg in ("core", "screeners", "ai", "providers")):
@@ -1770,12 +1770,41 @@ if run_btn or "cached_results" in st.session_state:
                                 f'<b>💡 Trailing Playbook:</b> {p.get("trailing_playbook")}</div>'
                             ) if p.get("trailing_playbook") else ''
 
+                            # Determine Last Traded Price (LTP) and Daily Change %
+                            ltp_val = p.get("close") or p.get("ltp")
+                            chg_val = p.get("change_pct")
+
+                            if (ltp_val is None or ltp_val == 0.0) and sym in data_dict and not data_dict[sym].empty:
+                                df_sym = data_dict[sym]
+                                ltp_val = float(df_sym["close"].iloc[-1])
+                                if chg_val is None and len(df_sym) >= 2:
+                                    prev_c = float(df_sym["close"].iloc[-2])
+                                    if prev_c > 0:
+                                        chg_val = ((ltp_val - prev_c) / prev_c) * 100.0
+
+                            if ltp_val is None or ltp_val == 0.0:
+                                ltp_val = float(p.get("entry_price", 0.0))
+
+                            if chg_val is None:
+                                chg_val = 0.0
+
+                            chg_color = "#00E676" if chg_val >= 0 else "#FF5252"
+                            chg_sign = "+" if chg_val >= 0 else ""
+
                             thesis_clean = p.get('thesis', '').replace('"', '&quot;')
 
                             card_html = (
                                 f'<div style="background-color: #1a1e24; border-radius: 10px; padding: 18px; margin-bottom: 16px; border-left: 6px solid {border_color}; box-shadow: 0 4px 8px rgba(0,0,0,0.35);">'
-                                f'<div style="display: flex; justify-content: space-between; align-items: center;">'
-                                f'<h3 style="margin: 0; color: #FFF; font-size: 1.3rem;">{p.get("symbol")}</h3>'
+                                f'<div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px;">'
+                                f'<div>'
+                                f'<div style="display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap;">'
+                                f'<h3 style="margin: 0; color: #FFF; font-size: 1.35rem; font-weight: 700;">{sym}</h3>'
+                                f'<span style="font-size: 1.02rem; color: #CBD5E1; font-weight: 600;">'
+                                f'LTP: <b style="color: #FFF; font-size: 1.15rem;">₹{ltp_val:,.2f}</b> '
+                                f'(<b style="color: {chg_color}; font-size: 0.92rem;">{chg_sign}{chg_val:.2f}%</b>)'
+                                f'</span>'
+                                f'</div>'
+                                f'</div>'
                                 f'<span style="background-color: {badge_color}; color: {badge_text_color}; padding: 4px 12px; border-radius: 4px; font-weight: bold; font-size: 0.85rem;">{action}</span>'
                                 f'</div>'
                                 f'<p style="margin: 6px 0 10px 0; color: #8892B0; font-size: 0.85rem;">'

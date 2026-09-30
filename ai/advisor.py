@@ -96,6 +96,14 @@ class AIAdvisor:
                     
                     parsed = json.loads(text.strip())
                     if isinstance(parsed, list) and len(parsed) > 0:
+                        cand_map = {c.get("symbol"): c for c in candidates if c.get("symbol")}
+                        for p in parsed:
+                            sym_match = cand_map.get(p.get("symbol"))
+                            if sym_match:
+                                if "close" not in p:
+                                    p["close"] = float(sym_match.get("close", 0.0))
+                                if "change_pct" not in p:
+                                    p["change_pct"] = float(sym_match.get("change_pct", 0.0))
                         return parsed
             except Exception:
                 # Smooth fallback to algorithmic precision engine
@@ -423,6 +431,8 @@ class AIAdvisor:
                 "symbol": c.get("symbol"),
                 "category": cat,
                 "trade_action": action,
+                "close": close,
+                "change_pct": float(c.get("change_pct", 0.0)),
                 "entry_price": entry,
                 "stop_loss": stop_loss,
                 "tight_stop_loss": tight_sl,
