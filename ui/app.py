@@ -1128,7 +1128,12 @@ if run_btn or "cached_results" in st.session_state:
         # Macro Regime Status Banner
         regime_badge = macro_context.get("macro_regime_badge", "🟢 RISK-ON / MACRO TAILWIND")
         playbook = macro_context.get("trading_playbook", "Trade breakouts and dip leaders with full conviction.")
-        m_score = macro_context.get("macro_score", 40)
+        raw_score = macro_context.get("macro_score", 40)
+        try:
+            m_score_val = int(round(float(raw_score)))
+            m_score_str = f"{m_score_val:+d}"
+        except (ValueError, TypeError):
+            m_score_str = "+0"
         
         banner_bg = "linear-gradient(90deg, #064e3b 0%, #047857 100%)" if "RISK-ON" in regime_badge or "DIP" in regime_badge else ("linear-gradient(90deg, #78350f 0%, #b45309 100%)" if "CAUTIOUS" in regime_badge else "linear-gradient(90deg, #450a0a 0%, #7f1d1d 100%)")
         banner_border = "#10B981" if "RISK-ON" in regime_badge or "DIP" in regime_badge else ("#F59E0B" if "CAUTIOUS" in regime_badge else "#EF4444")
@@ -1138,7 +1143,7 @@ if run_btn or "cached_results" in st.session_state:
             f'<div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px;">'
             f'<div>'
             f'<span style="background-color: {banner_border}; color: #000; font-weight: 800; padding: 3px 10px; border-radius: 4px; font-size: 0.8rem; letter-spacing: 0.5px;">MACRO REGIME AUDIT</span>'
-            f'<h3 style="margin: 6px 0 2px 0; color: #FFF; font-size: 1.3rem;">{regime_badge} <span style="font-size: 1rem; color: #CBD5E0;">(Macro Score: {m_score:+d}/100)</span></h3>'
+            f'<h3 style="margin: 6px 0 2px 0; color: #FFF; font-size: 1.3rem;">{regime_badge} <span style="font-size: 1rem; color: #CBD5E0;">(Macro Score: {m_score_str}/100)</span></h3>'
             f'<div style="color: #F1F5F9; font-size: 0.9rem; line-height: 1.4;"><b>Institutional Playbook:</b> {playbook}</div>'
             f'</div>'
             f'</div>'
