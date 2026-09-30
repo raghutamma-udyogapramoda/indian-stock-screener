@@ -103,7 +103,15 @@ INDEX_TO_YFINANCE = {
     "INDIA_VIX": "^INDIAVIX",
 }
 
-YFINANCE_TO_INDEX = {v: k for k, v in INDEX_TO_YFINANCE.items()}
+YFINANCE_TO_INDEX = {
+    "^NSEI": "NIFTY",
+    "^NSEBANK": "BANKNIFTY",
+    "^BSESN": "SENSEX",
+    "NIFTY_FIN_SERVICE.NS": "FINNIFTY",
+    "^NSEMDCP50": "MIDCPNIFTY",
+    "^CNXIT": "NIFTYIT",
+    "^INDIAVIX": "INDIAVIX",
+}
 
 
 class UniverseManager:
@@ -251,6 +259,12 @@ class UniverseManager:
         """Checks if a symbol is an Indian market index (e.g. NIFTY, BANKNIFTY, SENSEX)."""
         clean = UniverseManager.to_clean_symbol(symbol)
         return clean in INDICES_SEED or symbol.upper() in INDEX_TO_YFINANCE or symbol.startswith("^")
+
+    @staticmethod
+    def is_fno(symbol: str) -> bool:
+        """Checks if a symbol is in the NSE F&O (Futures & Options) underlying universe."""
+        clean = UniverseManager.to_clean_symbol(symbol)
+        return clean in NSE_FO_SEED or clean in ["NIFTY", "BANKNIFTY", "FINNIFTY", "MIDCPNIFTY"]
 
     @staticmethod
     def get_exchange(symbol: str) -> str:

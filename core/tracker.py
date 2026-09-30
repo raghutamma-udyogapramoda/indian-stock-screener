@@ -227,8 +227,8 @@ class PortfolioTracker:
         - Generates clear action badges and comprehensive execution thesis.
         """
         sym = pos["symbol"]
-        buy_p = float(pos["buy_price"])
-        qty = float(pos["qty"])
+        buy_p = float(pos.get("buy_price") or pos.get("entry_price") or 0.0)
+        qty = float(pos.get("qty", 1))
         sl = float(pos.get("stop_loss", buy_p * 0.95))
         tgt = float(pos.get("target", buy_p * 1.10))
         asset_type = pos.get("asset_type", "EQUITY")

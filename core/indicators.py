@@ -165,7 +165,7 @@ def enrich_with_indicators(df: pd.DataFrame) -> pd.DataFrame:
       - Close Location Value (CLV): Measures intra-session buying pressure (CLV >= 0.70)
         vs institutional dumping (CLV <= 0.35).
     """
-    if len(df) < 20:
+    if df is None or len(df) < 20:
         return df
 
     # Trend EMAs & SMAs: Stage analysis and dynamic support/resistance

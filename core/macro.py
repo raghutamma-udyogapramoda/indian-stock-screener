@@ -271,7 +271,7 @@ class MacroMarketEngine:
         usdinr_rate = _safe_get_usdinr_rate()
         
         # 2. Extract benchmark series
-        benchmarks = benchmark_dict or {}
+        benchmarks = benchmark_dict if isinstance(benchmark_dict, dict) else {}
         def _get_df(syms):
             for s in syms:
                 d = benchmarks.get(s)

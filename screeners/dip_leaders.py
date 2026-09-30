@@ -84,13 +84,7 @@ class DipLeaderScreener(BaseScreener):
             return None
 
         # 2. Benchmark comparative metrics
-        benchmarks = benchmark_data or {}
-        nifty_df = None
-        for k in ["NIFTY", "^NSEI", "NIFTY50", "NIFTY_50"]:
-            d = benchmarks.get(k)
-            if d is not None and isinstance(d, pd.DataFrame) and not d.empty:
-                nifty_df = d
-                break
+        nifty_df = MarketIntelAnalyzer.extract_nifty_benchmark(benchmark_data)
 
         mansfield_rs = 0.0
         rs_trend = "Neutral"

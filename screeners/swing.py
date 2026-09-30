@@ -144,9 +144,7 @@ class SwingScreener(BaseScreener):
                 reasons.append(tailwind["description"])
                 score += tailwind["tailwind_score_bonus"]
 
-            nifty_df = benchmark_data.get("NIFTY") if benchmark_data else None
-            if nifty_df is None and benchmark_data:
-                nifty_df = benchmark_data.get("^NSEI")
+            nifty_df = MarketIntelAnalyzer.extract_nifty_benchmark(benchmark_data)
             panic_info = MarketIntelAnalyzer.evaluate_panic_day_behavior(df, nifty_df)
             mrs_val, mrs_desc = MarketIntelAnalyzer.compute_mansfield_rs(df, nifty_df)
             if panic_info["panic_resilient"]:

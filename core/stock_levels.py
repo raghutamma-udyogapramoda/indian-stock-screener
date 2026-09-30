@@ -286,9 +286,7 @@ class StockLevelAnalyzer:
         """
         Analyzes a batch of stock OHLCVs to return action levels for all symbols.
         """
-        nifty_df = None
-        if benchmark_data:
-            nifty_df = benchmark_data.get("NIFTY") or benchmark_data.get("^NSEI")
+        nifty_df = MarketIntelAnalyzer.extract_nifty_benchmark(benchmark_data)
 
         results = []
         for sym, df in data.items():

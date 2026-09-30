@@ -99,9 +99,7 @@ class BreakoutScreener(BaseScreener):
         tailwind = MarketIntelAnalyzer.evaluate_sector_tailwind(symbol, benchmark_data, is_bullish=True)
         has_tailwind = tailwind["has_tailwind"]
 
-        nifty_df = benchmark_data.get("NIFTY") if benchmark_data else None
-        if nifty_df is None and benchmark_data:
-            nifty_df = benchmark_data.get("^NSEI")
+        nifty_df = MarketIntelAnalyzer.extract_nifty_benchmark(benchmark_data)
         panic_info = MarketIntelAnalyzer.evaluate_panic_day_behavior(df, nifty_df)
         mrs_val, mrs_desc = MarketIntelAnalyzer.compute_mansfield_rs(df, nifty_df)
 

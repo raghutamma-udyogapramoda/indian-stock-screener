@@ -7,7 +7,7 @@ Provides quantitative modules for:
   4. Mansfield Relative Strength (MRS): 50-period outperformance vs NIFTY 50.
 """
 
-from typing import Dict, Optional, Tuple
+from typing import Any, Dict, Optional, Tuple
 import numpy as np
 import pandas as pd
 
@@ -325,9 +325,27 @@ class MarketIntelAnalyzer:
             }
 
     @staticmethod
+    def extract_nifty_benchmark(benchmark_data: Optional[Any]) -> Optional[pd.DataFrame]:
+        """
+        Safely extracts the Nifty benchmark DataFrame without triggering
+        'The truth value of a DataFrame is ambiguous' error.
+        Handles dict of DataFrames, single DataFrame, or None.
+        """
+        if benchmark_data is None:
+            return None
+        if isinstance(benchmark_data, pd.DataFrame):
+            return benchmark_data if not benchmark_data.empty else None
+        if isinstance(benchmark_data, dict):
+            for k in ["NIFTY", "^NSEI", "NIFTY50", "NIFTY_50"]:
+                d = benchmark_data.get(k)
+                if d is not None and isinstance(d, pd.DataFrame) and not d.empty:
+                    return d
+        return None
+
+    @staticmethod
     def evaluate_sector_tailwind(
         symbol: str,
-        benchmark_dict: Optional[Dict[str, pd.DataFrame]],
+        benchmark_dict: Optional[Any],
         is_bullish: bool = True
     ) -> dict:
         """
@@ -335,7 +353,7 @@ class MarketIntelAnalyzer:
         """
         sector_name, bench_sym = MarketIntelAnalyzer.get_stock_sector(symbol)
         
-        if not benchmark_dict:
+        if benchmark_dict is None:
             return {
                 "sector_name": sector_name,
                 "benchmark_symbol": bench_sym,
@@ -345,9 +363,14 @@ class MarketIntelAnalyzer:
             }
 
         # Look for benchmark df
-        bench_df = benchmark_dict.get(bench_sym)
-        if bench_df is None or len(bench_df) < 20:
-            bench_df = benchmark_dict.get("NIFTY")
+        bench_df = None
+        if isinstance(benchmark_dict, dict):
+            bench_df = benchmark_dict.get(bench_sym)
+            if bench_df is None or len(bench_df) < 20:
+                bench_df = MarketIntelAnalyzer.extract_nifty_benchmark(benchmark_dict)
+                bench_sym = "NIFTY"
+        elif isinstance(benchmark_dict, pd.DataFrame):
+            bench_df = benchmark_dict
             bench_sym = "NIFTY"
 
         if bench_df is None or len(bench_df) < 20:
