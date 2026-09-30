@@ -317,6 +317,45 @@ class AIAdvisor:
                     f"and trail SL to T1. Let remaining 30% runners target T3/T4 (₹{target_3:,.1f})."
                 )
 
+            elif cat == "TWO_WAY_LEVELS":
+                bias = c.get("bias", "LONG")
+                rise_above = float(c.get("rise_above", close * 1.015))
+                fall_below = float(c.get("fall_below", close * 0.985))
+                up_t1 = float(c.get("upside_target_1", rise_above + (1.2 * atr)))
+                down_t1 = float(c.get("downside_target_1", fall_below - (1.2 * atr)))
+                
+                is_short = (bias == "SHORT" or "BEAR" in str(bias).upper())
+                if is_short:
+                    entry = fall_below
+                    tight_sl = round(fall_below + (0.6 * atr), 2)
+                    cons_sl = round(fall_below + (1.2 * atr), 2)
+                    stop_loss = tight_sl
+                    risk = max(stop_loss - entry, close * 0.01)
+                    target_1 = down_t1
+                    target_2 = round(fall_below - (1.6 * atr), 2)
+                    target_3 = round(fall_below - (2.5 * atr), 2)
+                    target_4 = round(fall_below - (3.5 * atr), 2)
+                    action = "SELL"
+                    timeframe = "Breakdown Floor Trigger"
+                    conviction = "HIGH" if c.get("score", 0) >= 80 else "MEDIUM"
+                    thesis = f"Two-Way Trigger: Breakdown below floor ₹{fall_below:,.2f} invalidates demand toward ₹{target_1:,.2f}."
+                    trailing_playbook = f"Sell short on decisive breakdown below ₹{fall_below:,.2f} (SL: ₹{stop_loss:,.2f}). Cover 50% at T1 (₹{target_1:,.2f})."
+                else:
+                    entry = rise_above
+                    tight_sl = round(rise_above - (0.6 * atr), 2)
+                    cons_sl = round(rise_above - (1.2 * atr), 2)
+                    stop_loss = tight_sl
+                    risk = max(entry - stop_loss, close * 0.01)
+                    target_1 = up_t1
+                    target_2 = round(rise_above + (1.6 * atr), 2)
+                    target_3 = round(rise_above + (2.5 * atr), 2)
+                    target_4 = round(rise_above + (3.5 * atr), 2)
+                    action = "BUY"
+                    timeframe = "Breakout Ceiling Trigger"
+                    conviction = "HIGH" if c.get("score", 0) >= 80 else "MEDIUM"
+                    thesis = f"Two-Way Trigger: Rally break above resistance ₹{rise_above:,.2f} triggers upside expansion toward ₹{target_1:,.2f}."
+                    trailing_playbook = f"Buy on sustained breakout above ₹{rise_above:,.2f} (SL: ₹{stop_loss:,.2f}). Book 50% at T1 (₹{target_1:,.2f})."
+
             else:
                 entry = close
                 tight_sl = round(close * 0.98, 2)

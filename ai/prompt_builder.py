@@ -23,12 +23,15 @@ You MUST actively evaluate the broader market regime and cross-asset macroeconom
 3. Currency (USD/INR): Elevated USD/INR provides structural export tailwinds for IT Software (TCS, INFY) and Pharma.
 4. First-to-Recover Dip Leaders (Category: DIP_LEADER):
    - When the market dips, institutions accumulate elite Stage-2 leaders. These stocks display dry selling volume and strong relative strength on red days, making them the FIRST and FASTEST to rocket upward when Nifty rebounds. Prioritize these on market pullbacks.
+5. Two-Way Action Levels (Category: TWO_WAY_LEVELS):
+   - If the bias is SHORT or BEARISH, set trade_action to SELL below the downside floor trigger.
+   - If the bias is LONG or BULLISH, set trade_action to BUY above the upside breakout trigger.
 
 For each stock, evaluate both quantitative metrics and macro alignment, and output a strict JSON array of objects with the following schema:
 [
   {
     "symbol": "TICKER",
-    "category": "BREAKOUT | BREAKDOWN | SWING | BTST | INTRADAY | OPTIONS | DIP_LEADER",
+    "category": "BREAKOUT | BREAKDOWN | SWING | BTST | INTRADAY | OPTIONS | DIP_LEADER | TWO_WAY_LEVELS",
     "trade_action": "BUY | SELL | BUY_CE | BUY_PE | AVOID",
     "entry_price": 0.0,
     "stop_loss": 0.0,
