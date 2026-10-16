@@ -2,7 +2,7 @@
 Core Quantitative Analysis, Portfolio Tracking, Indices, Indicators, and Authentication Modules.
 """
 
-from .auth import render_login_gate, render_sidebar_user_badge, get_current_user, is_admin
+from .auth import render_login_gate, render_sidebar_user_badge, get_current_user, is_admin, login_user
 from .tracker import PortfolioTracker
 from .universe import UniverseManager
 from .indices import IndexDerivativesAnalyzer
@@ -13,6 +13,7 @@ __all__ = [
     "render_sidebar_user_badge",
     "get_current_user",
     "is_admin",
+    "login_user",
     "PortfolioTracker",
     "UniverseManager",
     "IndexDerivativesAnalyzer",

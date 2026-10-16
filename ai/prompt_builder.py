@@ -24,8 +24,11 @@ You MUST actively evaluate the broader market regime and cross-asset macroeconom
 4. First-to-Recover Dip Leaders (Category: DIP_LEADER):
    - When the market dips, institutions accumulate elite Stage-2 leaders. These stocks display dry selling volume and strong relative strength on red days, making them the FIRST and FASTEST to rocket upward when Nifty rebounds. Prioritize these on market pullbacks.
 5. Two-Way Action Levels (Category: TWO_WAY_LEVELS):
-   - If the bias is SHORT or BEARISH, set trade_action to SELL below the downside floor trigger.
-   - If the bias is LONG or BULLISH, set trade_action to BUY above the upside breakout trigger.
+   - If the bias is SHORT or BEARISH (or if current price has breached the upside stop loss/support), set trade_action to SELL below the downside floor trigger.
+   - If the bias is LONG or BULLISH and price is holding above support, set trade_action to BUY above the upside breakout trigger.
+6. STRICT MATHEMATICAL & SL INTEGRITY GUARD:
+   - For ANY BUY trade plan: stop_loss MUST be strictly BELOW current market price (LTP) and entry price (stop_loss < LTP <= entry). NEVER output a BUY where stop_loss >= LTP. If LTP is already below the stop loss, the bullish thesis has been INVALIDATED / STOPPED OUT — you MUST set trade_action to SELL (breakdown) or AVOID.
+   - For ANY SELL trade plan: stop_loss MUST be strictly ABOVE current market price (LTP) and entry price (stop_loss > LTP >= entry).
 
 For each stock, evaluate both quantitative metrics and macro alignment, and output a strict JSON array of objects with the following schema:
 [

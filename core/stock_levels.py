@@ -143,6 +143,9 @@ class StockLevelAnalyzer:
         dist_fall = ((close - fall_below) / close) * 100.0
 
         # State determination
+        upside_sl_breached = bool(close < upside_sl)
+        downside_sl_breached = bool(close > downside_sl)
+
         if close >= rise_above:
             status = "🟢 ACTIVE EXPANSION (Trading Above Rise Level)"
             status_color = "#00E676"
@@ -159,6 +162,10 @@ class StockLevelAnalyzer:
             status = "⚠️ TESTING SUPPORT (Near Downside Fall Level)"
             status_color = "#FFA726"
             bias = "BEARISH_BIAS"
+        elif upside_sl_breached:
+            status = f"⚠️ SL BROKEN / TESTING SUPPORT (Trading Below Upside Base ₹{upside_sl:,.2f})"
+            status_color = "#EF4444"
+            bias = "BEARISH_BIAS"
         else:
             status = "🟡 CONSOLIDATING (Inside Neutral Chop Range)"
             status_color = "#FFD54F"
@@ -169,14 +176,28 @@ class StockLevelAnalyzer:
         is_comm = UniverseManager.is_commodity(clean)
         unit = "pts" if is_comm else "₹"
 
-        thesis_rise = (
-            f"🟢 RALLY TRIGGER: Sustained hold ABOVE ₹{rise_above:,.2f} confirms buyer absorption and triggers momentum rally "
-            f"toward Targets ₹{upside_t1:,.2f} (T1) and ₹{upside_t2:,.2f} (T2) with Invalidation Stop Loss at ₹{upside_sl:,.2f} (R:R {upside_rr})."
-        )
-        thesis_fall = (
-            f"🔴 DOWNSIDE TRIGGER: Crack and breach BELOW ₹{fall_below:,.2f} invalidates demand and accelerates downward selling "
-            f"toward Targets ₹{downside_t1:,.2f} (T1) and ₹{downside_t2:,.2f} (T2) with Invalidation Stop Loss at ₹{downside_sl:,.2f} (R:R {downside_rr})."
-        )
+        if upside_sl_breached:
+            thesis_rise = (
+                f"⚠️ SL BROKEN: Current price (₹{close:,.2f}) is trading BELOW upside base / SL (₹{upside_sl:,.2f}). "
+                f"Bullish setup is invalidated at market. Upside rally ONLY re-activates if price recovers decisively ABOVE ₹{rise_above:,.2f}."
+            )
+        else:
+            thesis_rise = (
+                f"🟢 RALLY TRIGGER: Sustained hold ABOVE ₹{rise_above:,.2f} confirms buyer absorption and triggers momentum rally "
+                f"toward Targets ₹{upside_t1:,.2f} (T1) and ₹{upside_t2:,.2f} (T2) with Invalidation Stop Loss at ₹{upside_sl:,.2f} (R:R {upside_rr})."
+            )
+
+        if downside_sl_breached and close > fall_below:
+            thesis_fall = (
+                f"🔴 DOWNSIDE TRIGGER: Crack and breach BELOW ₹{fall_below:,.2f} invalidates demand and accelerates downward selling "
+                f"toward Targets ₹{downside_t1:,.2f} (T1) and ₹{downside_t2:,.2f} (T2) with Invalidation Stop Loss at ₹{downside_sl:,.2f} (R:R {downside_rr})."
+            )
+        else:
+            thesis_fall = (
+                f"🔴 DOWNSIDE TRIGGER: Crack and breach BELOW ₹{fall_below:,.2f} invalidates demand and accelerates downward selling "
+                f"toward Targets ₹{downside_t1:,.2f} (T1) and ₹{downside_t2:,.2f} (T2) with Invalidation Stop Loss at ₹{downside_sl:,.2f} (R:R {downside_rr})."
+            )
+
         thesis_neutral = (
             f"🟡 NO-TRADE ZONE: Currently trading at ₹{close:,.2f} inside range ({chop_zone}). "
             f"Wait for a decisive breakout above ₹{rise_above:,.2f} or breakdown below ₹{fall_below:,.2f} before initiating high-conviction positions."
@@ -248,6 +269,8 @@ class StockLevelAnalyzer:
             "status": status,
             "status_color": status_color,
             "bias": bias,
+            "upside_sl_breached": upside_sl_breached,
+            "downside_sl_breached": downside_sl_breached,
             "thesis_rise": thesis_rise,
             "thesis_fall": thesis_fall,
             "thesis_neutral": thesis_neutral,

@@ -104,7 +104,9 @@ class AIAdvisor:
                                     p["close"] = float(sym_match.get("close", 0.0))
                                 if "change_pct" not in p:
                                     p["change_pct"] = float(sym_match.get("change_pct", 0.0))
-                        return parsed
+                        # Enforce mathematical progression and anti-inversion validation on LLM output
+                        guarded_plans = [self._sanitize_and_guard_plan(p, cand_map.get(p.get("symbol"))) for p in parsed]
+                        return guarded_plans
             except Exception:
                 # Smooth fallback to algorithmic precision engine
                 pass
@@ -331,8 +333,13 @@ class AIAdvisor:
                 fall_below = float(c.get("fall_below", close * 0.985))
                 up_t1 = float(c.get("upside_target_1", rise_above + (1.2 * atr)))
                 down_t1 = float(c.get("downside_target_1", fall_below - (1.2 * atr)))
-                
-                is_short = (bias == "SHORT" or "BEAR" in str(bias).upper())
+                upside_sl = float(c.get("upside_stop_loss", rise_above - (0.5 * atr)))
+
+                # Check for upside SL breach:
+                # If current price is below the upside SL, the bullish thesis is invalidated.
+                upside_invalidated = bool(close < upside_sl or c.get("upside_sl_breached", False))
+                is_short = (bias == "SHORT" or "BEAR" in str(bias).upper() or upside_invalidated or close <= fall_below)
+
                 if is_short:
                     entry = fall_below
                     tight_sl = round(fall_below + (0.6 * atr), 2)
@@ -345,9 +352,19 @@ class AIAdvisor:
                     target_4 = round(fall_below - (3.5 * atr), 2)
                     action = "SELL"
                     timeframe = "Breakdown Floor Trigger"
-                    conviction = "HIGH" if c.get("score", 0) >= 80 else "MEDIUM"
-                    thesis = f"Two-Way Trigger: Breakdown below floor ₹{fall_below:,.2f} invalidates demand toward ₹{target_1:,.2f}."
-                    trailing_playbook = f"Sell short on decisive breakdown below ₹{fall_below:,.2f} (SL: ₹{stop_loss:,.2f}). Cover 50% at T1 (₹{target_1:,.2f})."
+                    conviction = "HIGH" if (c.get("score", 0) >= 80 or close <= fall_below) else "MEDIUM"
+                    if upside_invalidated:
+                        thesis = (
+                            f"🛑 Bullish SL Breached: Stock dropped to ₹{close:,.2f}, breaching prior upside support (₹{upside_sl:,.2f}). "
+                            f"Bullish setup is invalidated. Active tactical trade is SHORT on breakdown below floor ₹{fall_below:,.2f} toward ₹{target_1:,.2f}."
+                        )
+                        trailing_playbook = (
+                            f"Do NOT buy at market. Wait for breakdown below ₹{fall_below:,.2f} (SL: ₹{stop_loss:,.2f}). "
+                            f"Cover 50% at T1 (₹{target_1:,.2f}) and trail SL to cost."
+                        )
+                    else:
+                        thesis = f"Two-Way Trigger: Breakdown below floor ₹{fall_below:,.2f} invalidates demand toward ₹{target_1:,.2f}."
+                        trailing_playbook = f"Sell short on decisive breakdown below ₹{fall_below:,.2f} (SL: ₹{stop_loss:,.2f}). Cover 50% at T1 (₹{target_1:,.2f})."
                 else:
                     entry = rise_above
                     tight_sl = round(rise_above - (0.6 * atr), 2)
@@ -395,39 +412,15 @@ class AIAdvisor:
                 if conviction == "MEDIUM" and macro_impact.get("conviction_delta", 0) >= 12:
                     conviction = "HIGH"
 
-            # Strict Mathematical Progression Guard: Guarantee targets never overlap or invert
-            is_bullish = ("BUY" in action or action == "LONG") and "PE" not in action
-            risk = max(abs(entry - stop_loss), close * 0.01)
-
-            if is_bullish:
-                # Bullish trade: SL < Entry < T1 < T2 < T3 < T4
-                stop_loss = min(stop_loss, round(entry - (0.8 * risk), 2))
-                tight_sl = min(tight_sl, round(entry - (0.5 * risk), 2))
-                cons_sl = min(cons_sl, tight_sl)
-                target_1 = max(target_1, round(entry + (1.0 * risk), 2))
-                target_2 = max(target_2, round(target_1 + (0.5 * risk), 2))
-                target_3 = max(target_3, round(target_2 + (0.6 * risk), 2))
-                target_4 = max(target_4, round(target_3 + (0.8 * risk), 2))
-            else:
-                # Bearish / Short trade: SL > Entry > T1 > T2 > T3 > T4
-                stop_loss = max(stop_loss, round(entry + (0.8 * risk), 2))
-                tight_sl = max(tight_sl, round(entry + (0.5 * risk), 2))
-                cons_sl = max(cons_sl, tight_sl)
-                target_1 = min(target_1, round(entry - (1.0 * risk), 2))
-                target_2 = min(target_2, round(target_1 - (0.5 * risk), 2))
-                target_3 = min(target_3, round(target_2 - (0.6 * risk), 2))
-                target_4 = min(target_4, round(target_3 - (0.8 * risk), 2))
-
+            # Raw plan dictionary
             risk = abs(entry - stop_loss)
             reward_t1 = abs(target_1 - entry)
             reward_t4 = abs(target_4 - entry)
             rr_ratio = f"1:{reward_t1 / (risk + 1e-6):.1f} (T1) → 1:{reward_t4 / (risk + 1e-6):.1f} (T4)"
-            
-            # Position sizing rule: Units to buy for fixed ₹2,000 risk
             shares_for_2k_risk = max(int(2000 / (risk + 1e-6)), 1)
             capital_for_2k_risk = round(shares_for_2k_risk * entry, 2)
 
-            plans.append({
+            raw_plan = {
                 "symbol": c.get("symbol"),
                 "category": cat,
                 "trade_action": action,
@@ -449,6 +442,110 @@ class AIAdvisor:
                 "shares_for_2k_risk": shares_for_2k_risk,
                 "capital_for_2k_risk": capital_for_2k_risk,
                 "macro_badge": macro_badge
-            })
+            }
+            # Guard against SL inversion or invalidation
+            guarded_plan = self._sanitize_and_guard_plan(raw_plan, c)
+            plans.append(guarded_plan)
 
         return plans
+
+    @staticmethod
+    def _sanitize_and_guard_plan(plan: Dict[str, Any], cand: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        """
+        Guarantees strict mathematical progression and prevents Stop Loss inversion against CMP.
+        If current market price is at or below the stop loss for a BUY trade, the setup is invalidated
+        and either flipped to a breakdown SHORT plan (for TWO_WAY_LEVELS) or marked as AVOID.
+        """
+        close = float(plan.get("close", 0.0))
+        if close <= 0 and cand:
+            close = float(cand.get("close", 0.0))
+            plan["close"] = close
+
+        entry = float(plan.get("entry_price", close))
+        stop_loss = float(plan.get("stop_loss", close * 0.95))
+        tight_sl = float(plan.get("tight_stop_loss", stop_loss))
+        cons_sl = float(plan.get("conservative_stop_loss", stop_loss))
+        target_1 = float(plan.get("target_1", close * 1.02))
+        target_2 = float(plan.get("target_2", close * 1.04))
+        target_3 = float(plan.get("target_3", close * 1.06))
+        target_4 = float(plan.get("target_4", close * 1.08))
+
+        action = str(plan.get("trade_action", "BUY")).upper()
+        cat = plan.get("category", "")
+        atr = float(cand.get("atr", close * 0.02)) if cand else (close * 0.02)
+        if atr <= 0:
+            atr = max(close * 0.02, 0.5)
+
+        is_bullish = ("BUY" in action or action == "LONG") and "PE" not in action
+
+        # 1. Anti-Inversion & Invalidation Check against Live Market Price (close / CMP)
+        if is_bullish and close > 0 and close <= stop_loss:
+            if cat == "TWO_WAY_LEVELS":
+                plan["trade_action"] = "SELL"
+                is_bullish = False
+                f_below = float(cand.get("fall_below", round(close * 0.99, 2))) if cand else round(close * 0.99, 2)
+                entry = f_below
+                stop_loss = round(max(entry + (0.8 * atr), close + (0.5 * atr)), 2)
+                tight_sl = stop_loss
+                cons_sl = round(max(entry + (1.2 * atr), tight_sl + (0.3 * atr)), 2)
+                target_1 = float(cand.get("downside_target_1", round(entry - (1.2 * atr), 2))) if cand else round(entry - (1.2 * atr), 2)
+                target_2 = round(entry - (1.6 * atr), 2)
+                target_3 = round(entry - (2.5 * atr), 2)
+                target_4 = round(entry - (3.5 * atr), 2)
+                plan["timeframe"] = "Breakdown Floor Trigger"
+                plan["conviction"] = "HIGH" if (cand and cand.get("score", 0) >= 80) else "MEDIUM"
+                plan["thesis"] = (
+                    f"🛑 Bullish SL Breached: Stock fell to ₹{close:,.2f}, breaching prior support/SL. "
+                    f"Bullish setup is void. Tactical trade is SHORT on breakdown below floor ₹{entry:,.2f} toward ₹{target_1:,.2f}."
+                )
+                plan["trailing_playbook"] = f"Do NOT buy at market. Sell on breakdown below ₹{entry:,.2f} (SL: ₹{stop_loss:,.2f}). Cover 50% at T1 (₹{target_1:,.2f})."
+            else:
+                plan["trade_action"] = "AVOID"
+                plan["timeframe"] = "Setup Invalidated (SL Broken)"
+                plan["thesis"] = (
+                    f"🛑 SETUP INVALIDATED: Stock traded down to ₹{close:,.2f}, breaching critical stop loss (₹{stop_loss:,.2f}). "
+                    f"Bullish thesis is void at market price."
+                )
+                plan["trailing_playbook"] = "Avoid entering or square off existing position immediately. Wait for fresh institutional base."
+                plan["conviction"] = "SPECULATIVE"
+                is_bullish = False
+
+        # 2. Strict Progression and Distance Enforcement
+        risk = max(abs(entry - stop_loss), close * 0.01)
+        if is_bullish:
+            # Bullish trades: SL must be strictly below BOTH entry and close (for market entry)
+            if abs(entry - close) / max(close, 1.0) < 0.02:
+                stop_loss = min(stop_loss, round(close - (0.5 * risk), 2))
+            else:
+                stop_loss = min(stop_loss, round(min(entry, close - 0.1), 2))
+            tight_sl = min(tight_sl, stop_loss)
+            cons_sl = min(cons_sl, tight_sl)
+            target_1 = max(target_1, round(entry + (1.0 * risk), 2))
+            target_2 = max(target_2, round(target_1 + (0.5 * risk), 2))
+            target_3 = max(target_3, round(target_2 + (0.6 * risk), 2))
+            target_4 = max(target_4, round(target_3 + (0.8 * risk), 2))
+        elif plan["trade_action"] in ["SELL", "SHORT"]:
+            # Bearish trades: SL must be strictly above BOTH entry and close
+            stop_loss = max(stop_loss, round(max(entry, close) + (0.5 * risk), 2))
+            tight_sl = max(tight_sl, stop_loss)
+            cons_sl = max(cons_sl, tight_sl)
+            target_1 = min(target_1, round(entry - (1.0 * risk), 2))
+            target_2 = min(target_2, round(target_1 - (0.5 * risk), 2))
+            target_3 = min(target_3, round(target_2 - (0.6 * risk), 2))
+            target_4 = min(target_4, round(target_3 - (0.8 * risk), 2))
+
+        risk = max(abs(entry - stop_loss), 0.05)
+        reward_t1 = abs(target_1 - entry)
+        reward_t4 = abs(target_4 - entry)
+        plan["entry_price"] = entry
+        plan["stop_loss"] = stop_loss
+        plan["tight_stop_loss"] = tight_sl
+        plan["conservative_stop_loss"] = cons_sl
+        plan["target_1"] = target_1
+        plan["target_2"] = target_2
+        plan["target_3"] = target_3
+        plan["target_4"] = target_4
+        plan["risk_reward_ratio"] = f"1:{reward_t1 / risk:.1f} (T1) → 1:{reward_t4 / risk:.1f} (T4)"
+        plan["shares_for_2k_risk"] = max(int(2000 / risk), 1)
+        plan["capital_for_2k_risk"] = round(plan["shares_for_2k_risk"] * entry, 2)
+        return plan

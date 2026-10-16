@@ -33,7 +33,7 @@ import streamlit as st
 
 # Robust import for core.auth with filesystem fallback
 try:
-    from core.auth import render_login_gate, render_sidebar_user_badge, get_current_user, is_admin
+    from core.auth import render_login_gate, render_sidebar_user_badge, get_current_user, is_admin, login_user
 except Exception:
     import importlib.util
     _auth_file = PROJECT_ROOT / "core" / "auth.py"
@@ -45,10 +45,11 @@ except Exception:
     render_sidebar_user_badge = _auth_mod.render_sidebar_user_badge
     get_current_user = _auth_mod.get_current_user
     is_admin = _auth_mod.is_admin
+    login_user = getattr(_auth_mod, "login_user", None)
 
 # Guard against Streamlit Cloud stale in-memory module caching across git updates
 import importlib
-_APP_BUILD_SIG = "2026_09_30_realtime_v9_goldm_silverm"
+_APP_BUILD_SIG = "2026_10_16_one_click_login_v1"
 if sys.modules.get("__CURRENT_BUILD_SIG__") != _APP_BUILD_SIG:
     for mod_name in list(sys.modules.keys()):
         if any(mod_name == pkg or mod_name.startswith(pkg + ".") for pkg in ("core", "screeners", "ai", "providers")):
@@ -57,6 +58,7 @@ if sys.modules.get("__CURRENT_BUILD_SIG__") != _APP_BUILD_SIG:
 
 # Ensure all core and screener modules are strictly fresh
 try:
+    import core.auth
     import core.universe
     import core.macro
     import core.relative_strength
@@ -70,6 +72,7 @@ try:
     import screeners.btst
     import screeners.intraday
     import screeners.options_fno
+    importlib.reload(core.auth)
     importlib.reload(core.universe)
     importlib.reload(core.macro)
     importlib.reload(core.relative_strength)
@@ -738,11 +741,23 @@ def execute_screening(u_name, custom_list, strat, top_limit, prov_mode, b_key=""
     if u_name == "Custom" and custom_levels:
         custom_cands = []
         for cl in custom_levels:
+            # Rigorous directional bias assignment:
+            # If price has breached the upside base/SL, or is below breakdown floor, or closer to floor:
+            # The directional tactical pressure is SHORT / BEARISH, NOT LONG!
+            if "BEAR" in cl.get("bias", "") or cl.get("upside_sl_breached", False) or cl["close"] <= cl["fall_below"]:
+                cand_bias = "SHORT"
+            elif "BULL" in cl.get("bias", "") or cl["close"] >= cl["rise_above"]:
+                cand_bias = "LONG"
+            elif cl.get("fall_distance_pct", 10.0) <= cl.get("rise_distance_pct", 10.0):
+                cand_bias = "SHORT"
+            else:
+                cand_bias = "LONG"
+
             custom_cands.append({
                 "symbol": cl["symbol"],
                 "category": "TWO_WAY_LEVELS",
-                "bias": "LONG" if "BULL" in cl["bias"] else ("SHORT" if "BEAR" in cl["bias"] else "LONG"),
-                "score": 90.0 if "ACTIVE" in cl["status"] else (75.0 if "TESTING" in cl["status"] else 65.0),
+                "bias": cand_bias,
+                "score": 90.0 if "ACTIVE" in cl["status"] else (75.0 if ("TESTING" in cl["status"] or "SL BROKEN" in cl["status"]) else 65.0),
                 "close": cl["close"],
                 "change_pct": cl["change_pct"],
                 "rvol": cl["rvol"],
@@ -766,6 +781,11 @@ def execute_screening(u_name, custom_list, strat, top_limit, prov_mode, b_key=""
                 "fall_below": cl["fall_below"],
                 "upside_target_1": cl["upside_target_1"],
                 "downside_target_1": cl["downside_target_1"],
+                "upside_stop_loss": cl.get("upside_stop_loss"),
+                "downside_stop_loss": cl.get("downside_stop_loss"),
+                "upside_sl_breached": cl.get("upside_sl_breached", False),
+                "downside_sl_breached": cl.get("downside_sl_breached", False),
+                "status": cl.get("status", ""),
                 "trade_thesis": cl["trade_thesis"],
                 "options_setup": cl["options_setup"]
             })
@@ -998,6 +1018,13 @@ if run_btn or "cached_results" in st.session_state:
             
             levels_table = []
             for s in custom_levels:
+                up_sl_str = f"₹{s['upside_stop_loss']:,.2f} ({s['upside_risk_reward']})"
+                if s.get("upside_sl_breached"):
+                    up_sl_str = f"₹{s['upside_stop_loss']:,.2f} 🛑 (BREACHED: LTP < SL)"
+                down_sl_str = f"₹{s['downside_stop_loss']:,.2f} ({s['downside_risk_reward']})"
+                if s.get("downside_sl_breached") and s["close"] > s["fall_below"]:
+                    down_sl_str = f"₹{s['downside_stop_loss']:,.2f} 🛑 (BREACHED: LTP > SL)"
+
                 levels_table.append({
                     "Symbol": s["symbol"],
                     "Sector": s["sector"],
@@ -1006,12 +1033,12 @@ if run_btn or "cached_results" in st.session_state:
                     "🟢 RISE ABOVE": f"₹{s['rise_above']:,.2f}",
                     "Rise Dist %": f"{s['rise_distance_pct']:+.2f}%",
                     "Upside Targets": f"T1: ₹{s['upside_target_1']:,.2f} | T2: ₹{s['upside_target_2']:,.2f}",
-                    "Upside SL": f"₹{s['upside_stop_loss']:,.2f} ({s['upside_risk_reward']})",
+                    "Upside SL": up_sl_str,
                     "Call Play (CE)": s["options_setup"]["call_option_play"] if s["options_setup"].get("is_fno") else "N/A (Cash)",
                     "🔴 FALL BELOW": f"₹{s['fall_below']:,.2f}",
                     "Fall Dist %": f"{s['fall_distance_pct']:+.2f}%",
                     "Downside Targets": f"T1: ₹{s['downside_target_1']:,.2f} | T2: ₹{s['downside_target_2']:,.2f}",
-                    "Downside SL": f"₹{s['downside_stop_loss']:,.2f} ({s['downside_risk_reward']})",
+                    "Downside SL": down_sl_str,
                     "Put Play (PE)": s["options_setup"]["put_option_play"] if s["options_setup"].get("is_fno") else "N/A (Cash)",
                     "🟡 Chop Zone": s["chop_zone"],
                     "Status": s["status"]
@@ -1029,6 +1056,13 @@ if run_btn or "cached_results" in st.session_state:
                 chg_c = "#00E676" if chg >= 0 else "#FF5252"
                 b_color = s["status_color"]
                 
+                # SL breach alert banner inside card
+                rally_sl_alert = (
+                    f'<div style="background-color: #2b0d10; border-left: 3px solid #EF4444; padding: 4px 8px; border-radius: 4px; font-size: 0.78rem; color: #FECACA; margin-bottom: 8px;">'
+                    f'🛑 <b>Prior SL Violated:</b> LTP (₹{close_p:,.2f}) is below upside base (₹{s["upside_stop_loss"]:,.2f}). Inactive at market.'
+                    f'</div>'
+                ) if s.get("upside_sl_breached") else ""
+
                 # Card HTML
                 card_html = (
                     f'<div style="background-color: #1a1e24; border-radius: 10px; padding: 18px; margin-bottom: 16px; border-left: 6px solid {b_color}; box-shadow: 0 4px 12px rgba(0,0,0,0.35);">'
@@ -1048,6 +1082,7 @@ if run_btn or "cached_results" in st.session_state:
                     f'<div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 14px; margin-top: 14px;">'
                     f'<div style="background-color: #062b1a; border: 1px solid #10B981; border-radius: 8px; padding: 12px 14px;">'
                     f'<div style="color: #34D399; font-weight: bold; font-size: 0.95rem; margin-bottom: 6px;">🟢 RALLY SETUP (BUY ABOVE ₹{s["rise_above"]:,.2f})</div>'
+                    f'{rally_sl_alert}'
                     f'<div style="color: #E2E8F0; font-size: 0.84rem; line-height: 1.5;">'
                     f'• <b>Breakout Trigger:</b> ₹{s["rise_above"]:,.2f} ({s["rise_distance_pct"]:+.2f}% away)<br>'
                     f'• <b>Target 1 (0.8x ATR):</b> <b style="color: #34D399;">₹{s["upside_target_1"]:,.2f}</b><br>'
@@ -1715,17 +1750,27 @@ if run_btn or "cached_results" in st.session_state:
                         col = cols[idx % 2]
                         with col:
                             action = p.get('trade_action', 'BUY').upper()
-                            is_bullish = ("BUY" in action or action == "LONG") and "PE" not in action
-                            badge_color = "#00E676" if is_bullish else "#FF5252"
-                            badge_text_color = "#000" if is_bullish else "#FFF"
-                            border_color = badge_color
+                            is_avoid = "AVOID" in action
+                            is_bullish = ("BUY" in action or action == "LONG") and "PE" not in action and not is_avoid
+                            if is_avoid:
+                                badge_color = "#F59E0B"
+                                badge_text_color = "#000"
+                                border_color = badge_color
+                            elif is_bullish:
+                                badge_color = "#00E676"
+                                badge_text_color = "#000"
+                                border_color = badge_color
+                            else:
+                                badge_color = "#FF5252"
+                                badge_text_color = "#FFF"
+                                border_color = badge_color
 
                             # Column labels based on trade direction (Shorts profit downward)
-                            t1_lbl = "Target 1 (Book 33%)" if is_bullish else "Downside T1 (Cover 33%)"
-                            t2_lbl = "Target 2 (Book 33%)" if is_bullish else "Downside T2 (Cover 33%)"
-                            t3_lbl = "Target 3 (Trail SL)" if is_bullish else "Downside T3 (Trail SL)"
-                            t4_lbl = "Target 4 (Extended)" if is_bullish else "Downside T4 (Extended)"
-                            sl_lbl = "Stop Loss (Base)" if is_bullish else "Stop Loss (Invalidation)"
+                            t1_lbl = "Target 1 (Book 33%)" if is_bullish else ("Downside T1 (Cover 33%)" if not is_avoid else "Key Resistance T1")
+                            t2_lbl = "Target 2 (Book 33%)" if is_bullish else ("Downside T2 (Cover 33%)" if not is_avoid else "Key Resistance T2")
+                            t3_lbl = "Target 3 (Trail SL)" if is_bullish else ("Downside T3 (Trail SL)" if not is_avoid else "Key Target T3")
+                            t4_lbl = "Target 4 (Extended)" if is_bullish else ("Downside T4 (Extended)" if not is_avoid else "Key Target T4")
+                            sl_lbl = "Stop Loss (Base)" if is_bullish else ("Stop Loss (Invalidation)" if not is_avoid else "Violated Stop Loss")
 
                             # Commodity contract unit badge
                             sym = p.get("symbol", "")
@@ -1747,10 +1792,16 @@ if run_btn or "cached_results" in st.session_state:
                             macro_b = p.get("macro_badge", "")
                             macro_badge_html = f' | <b style="color: #64B5F6;">{macro_b}</b>' if macro_b else ''
 
-                            # Short / Put option explainer banner
-                            short_banner = ""
-                            if not is_bullish:
-                                short_banner = (
+                            # Directional / Invalidation explainer banner
+                            status_banner = ""
+                            if is_avoid:
+                                status_banner = (
+                                    f'<div style="background-color: #2b1f0d; border-left: 4px solid #F59E0B; padding: 6px 12px; border-radius: 4px; font-size: 0.8rem; color: #FEF3C7; margin-bottom: 8px;">'
+                                    f'<b>⚠️ Setup Invalidated / AVOID:</b> Technical stop loss was breached. Do not initiate new positions at CMP.'
+                                    f'</div>'
+                                )
+                            elif not is_bullish:
+                                status_banner = (
                                     f'<div style="background-color: #2b0d10; border-left: 4px solid #FF5252; padding: 6px 12px; border-radius: 4px; font-size: 0.8rem; color: #FFCDD2; margin-bottom: 8px;">'
                                     f'<b>📉 Short / Bearish Setup:</b> Profit is booked as price declines below Entry (₹{p.get("entry_price")}) toward Downside Targets.'
                                     f'</div>'
@@ -1795,6 +1846,14 @@ if run_btn or "cached_results" in st.session_state:
 
                             thesis_clean = p.get('thesis', '').replace('"', '&quot;')
 
+                            conv_raw = str(p.get("conviction", "MEDIUM")).upper()
+                            if "HIGH" in conv_raw:
+                                conv_pill = '<span style="background: rgba(16, 185, 129, 0.2); color: #10B981; border: 1px solid #10B981; padding: 2px 8px; border-radius: 4px; font-weight: 700; font-size: 0.8rem;">🔥 HIGH</span>'
+                            elif "MED" in conv_raw:
+                                conv_pill = '<span style="background: rgba(56, 189, 248, 0.2); color: #38BDF8; border: 1px solid #38BDF8; padding: 2px 8px; border-radius: 4px; font-weight: 700; font-size: 0.8rem;">⚡ MEDIUM</span>'
+                            else:
+                                conv_pill = '<span style="background: rgba(245, 158, 11, 0.2); color: #F59E0B; border: 1px solid #F59E0B; padding: 2px 8px; border-radius: 4px; font-weight: 700; font-size: 0.8rem;">⚠️ LOW / SPECULATIVE</span>'
+
                             card_html = (
                                 f'<div style="background-color: #1a1e24; border-radius: 10px; padding: 18px; margin-bottom: 16px; border-left: 6px solid {border_color}; box-shadow: 0 4px 8px rgba(0,0,0,0.35);">'
                                 f'<div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px;">'
@@ -1812,9 +1871,9 @@ if run_btn or "cached_results" in st.session_state:
                                 f'<p style="margin: 6px 0 10px 0; color: #8892B0; font-size: 0.85rem;">'
                                 f'Category: <b style="color: #64B5F6;">{p.get("category")}</b>{unit_badge}{macro_badge_html} | '
                                 f'Timeframe: <b style="color: #FFF;">{p.get("timeframe")}</b> | '
-                                f'Conviction: <b style="color: #FFD54F;">{p.get("conviction")}</b>'
+                                f'Conviction: {conv_pill}'
                                 f'</p>'
-                                f'{short_banner}'
+                                f'{status_banner}'
                                 f'{macro_impact_banner}'
                                 f'<div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; background-color: #0e1117; padding: 12px; border-radius: 6px; margin: 10px 0 6px 0;">'
                                 f'<div><span style="color: #888; font-size: 0.75rem;">Entry Trigger</span><br><b style="color: #FFF; font-size: 1.05rem;">₹{p.get("entry_price")}</b></div>'
@@ -1875,16 +1934,268 @@ if run_btn or "cached_results" in st.session_state:
                                         time.sleep(0.4)
                                         st.rerun()
 
-                # Build tab headers: Overview tab + Category sub-tabs
-                tab_headers = [f"🌟 All Plans ({len(plans)})"] + [f"{cat_labels[k]} ({len(plans_by_cat[k])})" for k in ordered_keys]
+                # Conviction tier helper functions
+                def _get_conviction_tier(p_dict):
+                    c_str = str(p_dict.get("conviction", "")).upper()
+                    if "HIGH" in c_str:
+                        return "HIGH"
+                    elif "MED" in c_str:
+                        return "MEDIUM"
+                    elif "LOW" in c_str or "SPEC" in c_str:
+                        return "LOW"
+                    return "MEDIUM"
+
+                def _get_rr_t1_numeric(p_dict):
+                    try:
+                        entry = float(p_dict.get("entry_price", 0.0))
+                        sl = float(p_dict.get("stop_loss", 0.0))
+                        t1 = float(p_dict.get("target_1", 0.0))
+                        risk = abs(entry - sl)
+                        if risk > 0:
+                            return abs(t1 - entry) / risk
+                    except Exception:
+                        pass
+                    return 1.0
+
+                def _get_conviction_rank(p_dict):
+                    tier = _get_conviction_tier(p_dict)
+                    if tier == "HIGH":
+                        return 3
+                    elif tier == "MEDIUM":
+                        return 2
+                    return 1
+
+                def _get_plan_change_pct(p_dict):
+                    try:
+                        return float(p_dict.get("change_pct", 0.0))
+                    except Exception:
+                        return 0.0
+
+                # Pre-group plans by conviction tier
+                high_plans = [p for p in plans if _get_conviction_tier(p) == "HIGH"]
+                med_plans = [p for p in plans if _get_conviction_tier(p) == "MEDIUM"]
+                low_plans = [p for p in plans if _get_conviction_tier(p) == "LOW"]
+
+                # Build tab headers: Overview tab + Conviction sub-tab + Category sub-tabs
+                tab_headers = [
+                    f"🌟 All Plans ({len(plans)})",
+                    f"🔥 Conviction ({len(plans)})"
+                ] + [f"{cat_labels[k]} ({len(plans_by_cat[k])})" for k in ordered_keys]
                 ai_sub_tabs = st.tabs(tab_headers)
 
-                # Render All Plans tab
+                # 1. Render All Plans tab
                 with ai_sub_tabs[0]:
                     _render_plans_cards_grid(plans, "all")
 
+                # 2. Render Conviction sub-tab
+                with ai_sub_tabs[1]:
+                    st.markdown("### 🎯 Conviction Radar — High vs. Low Conviction Breakdown")
+                    st.caption("Instantly isolate institutional high-conviction trade setups from standard and speculative opportunities based on quantitative momentum scores, volume expansion (>2x), and macroeconomic tailwinds.")
+
+                    # Visual KPI Summary Cards
+                    low_subtext = "Counter-trend, macro headwinds (e.g. crude spikes), or wider stops. Half-size or wait for confirmation." if len(low_plans) > 0 else "Zero speculative risk detected. 100% of candidates meet institutional criteria!"
+                    kpi_cards_html = (
+                        f'<div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 14px; margin: 12px 0 20px 0;">'
+                        f'<div style="background: linear-gradient(135deg, rgba(6, 78, 59, 0.45) 0%, rgba(4, 120, 87, 0.25) 100%); border: 1px solid #10B981; border-left: 6px solid #10B981; border-radius: 10px; padding: 16px; box-shadow: 0 4px 12px rgba(0,0,0,0.3);">'
+                        f'<div style="display: flex; justify-content: space-between; align-items: center;">'
+                        f'<span style="font-size: 0.8rem; font-weight: 700; color: #34D399; letter-spacing: 0.5px; text-transform: uppercase;">Institutional Core</span>'
+                        f'<span style="background: #064e3b; color: #34D399; border: 1px solid #10B981; padding: 2px 8px; border-radius: 12px; font-size: 0.75rem; font-weight: 700;">TIER 1</span>'
+                        f'</div>'
+                        f'<div style="display: flex; align-items: baseline; gap: 8px; margin: 8px 0 4px 0;">'
+                        f'<span style="font-size: 1.85rem; font-weight: 800; color: #FFF;">{len(high_plans)}</span>'
+                        f'<span style="font-size: 1.05rem; color: #34D399; font-weight: 700;">🔥 High Conviction</span>'
+                        f'</div>'
+                        f'<div style="font-size: 0.82rem; color: #CBD5E1; line-height: 1.4;">'
+                        f'Score &ge; 75-80, &gt;1.5x volume surge, or macro tailwinds. Primary candidates for full capital allocation.'
+                        f'</div>'
+                        f'</div>'
+                        f'<div style="background: linear-gradient(135deg, rgba(14, 42, 59, 0.45) 0%, rgba(3, 105, 161, 0.25) 100%); border: 1px solid #38BDF8; border-left: 6px solid #38BDF8; border-radius: 10px; padding: 16px; box-shadow: 0 4px 12px rgba(0,0,0,0.3);">'
+                        f'<div style="display: flex; justify-content: space-between; align-items: center;">'
+                        f'<span style="font-size: 0.8rem; font-weight: 700; color: #38BDF8; letter-spacing: 0.5px; text-transform: uppercase;">Standard Tactical</span>'
+                        f'<span style="background: #0e2a3b; color: #38BDF8; border: 1px solid #38BDF8; padding: 2px 8px; border-radius: 12px; font-size: 0.75rem; font-weight: 700;">TIER 2</span>'
+                        f'</div>'
+                        f'<div style="display: flex; align-items: baseline; gap: 8px; margin: 8px 0 4px 0;">'
+                        f'<span style="font-size: 1.85rem; font-weight: 800; color: #FFF;">{len(med_plans)}</span>'
+                        f'<span style="font-size: 1.05rem; color: #38BDF8; font-weight: 700;">⚡ Medium Conviction</span>'
+                        f'</div>'
+                        f'<div style="font-size: 0.82rem; color: #CBD5E1; line-height: 1.4;">'
+                        f'Baseline setups meeting technical continuation or bounce criteria. Standard risk allocation.'
+                        f'</div>'
+                        f'</div>'
+                        f'<div style="background: linear-gradient(135deg, rgba(69, 10, 10, 0.4) 0%, rgba(180, 83, 9, 0.25) 100%); border: 1px solid #F59E0B; border-left: 6px solid #F59E0B; border-radius: 10px; padding: 16px; box-shadow: 0 4px 12px rgba(0,0,0,0.3);">'
+                        f'<div style="display: flex; justify-content: space-between; align-items: center;">'
+                        f'<span style="font-size: 0.8rem; font-weight: 700; color: #FBBF24; letter-spacing: 0.5px; text-transform: uppercase;">Caution / Speculative</span>'
+                        f'<span style="background: #451a03; color: #FBBF24; border: 1px solid #F59E0B; padding: 2px 8px; border-radius: 12px; font-size: 0.75rem; font-weight: 700;">TIER 3</span>'
+                        f'</div>'
+                        f'<div style="display: flex; align-items: baseline; gap: 8px; margin: 8px 0 4px 0;">'
+                        f'<span style="font-size: 1.85rem; font-weight: 800; color: #FFF;">{len(low_plans)}</span>'
+                        f'<span style="font-size: 1.05rem; color: #FBBF24; font-weight: 700;">⚠️ Low / Speculative</span>'
+                        f'</div>'
+                        f'<div style="font-size: 0.82rem; color: #CBD5E1; line-height: 1.4;">'
+                        f'{low_subtext}'
+                        f'</div>'
+                        f'</div>'
+                        f'</div>'
+                    )
+                    render_html(kpi_cards_html)
+
+                    # Interactive Filter Controls
+                    cf_col1, cf_col2, cf_col3 = st.columns([2.3, 1.35, 1.35])
+                    with cf_col1:
+                        conv_filter_opt = st.radio(
+                            "Filter by Conviction Tier:",
+                            [
+                                f"🔥 High Conviction ({len(high_plans)})",
+                                f"⚡ Medium Conviction ({len(med_plans)})",
+                                f"⚠️ Low / Speculative ({len(low_plans)})",
+                                "✨ Split by Tiers (Grouped)",
+                                f"🌐 All Tiers ({len(plans)})"
+                            ],
+                            index=0 if len(high_plans) > 0 else (1 if len(med_plans) > 0 else 3),
+                            horizontal=True,
+                            key="conv_tier_radio_filter"
+                        )
+                    with cf_col2:
+                        conv_sort_opt = st.selectbox(
+                            "Sort By:",
+                            [
+                                "Conviction (Highest First)",
+                                "Risk:Reward Ratio (T1)",
+                                "Day Change % (Highest First)",
+                                "Symbol (A-Z)"
+                            ],
+                            key="conv_sort_select_filter"
+                        )
+                    with cf_col3:
+                        conv_dir_opt = st.selectbox(
+                            "Trade Direction:",
+                            ["All Directions", "🟢 Longs Only (BUY / CE)", "🔴 Shorts Only (SELL / PE)"],
+                            key="conv_dir_select_filter"
+                        )
+
+                    # Direction filtering helper
+                    def _apply_dir_filter(p_list, d_choice):
+                        if "Long" in d_choice:
+                            return [p for p in p_list if "BUY" in str(p.get("trade_action", "")).upper() and "PE" not in str(p.get("trade_action", "")).upper()]
+                        elif "Short" in d_choice:
+                            return [p for p in p_list if "SELL" in str(p.get("trade_action", "")).upper() or "PE" in str(p.get("trade_action", "")).upper()]
+                        return p_list
+
+                    # Sorting helper
+                    def _apply_sorting(p_list, s_choice):
+                        if "Conviction" in s_choice:
+                            return sorted(p_list, key=lambda p: (_get_conviction_rank(p), _get_rr_t1_numeric(p)), reverse=True)
+                        elif "Risk:Reward" in s_choice:
+                            return sorted(p_list, key=lambda p: _get_rr_t1_numeric(p), reverse=True)
+                        elif "Change" in s_choice:
+                            return sorted(p_list, key=lambda p: _get_plan_change_pct(p), reverse=True)
+                        elif "Symbol" in s_choice:
+                            return sorted(p_list, key=lambda p: str(p.get("symbol", "")))
+                        return p_list
+
+                    # Base pool selection based on radio
+                    if conv_filter_opt.startswith("🔥 High"):
+                        active_pool = high_plans
+                    elif conv_filter_opt.startswith("⚡ Medium"):
+                        active_pool = med_plans
+                    elif conv_filter_opt.startswith("⚠️ Low"):
+                        active_pool = low_plans
+                    else:
+                        active_pool = plans
+
+                    filtered_plans = _apply_sorting(_apply_dir_filter(active_pool, conv_dir_opt), conv_sort_opt)
+
+                    # Quick-Scan Conviction Comparison Table
+                    with st.expander("📊 Quick-Scan Conviction Comparison Table", expanded=True):
+                        if filtered_plans:
+                            table_rows = []
+                            for p in filtered_plans:
+                                sym_p = p.get("symbol", "")
+                                ltp_val = p.get("close") or p.get("ltp") or p.get("entry_price", 0.0)
+                                chg_pct = p.get("change_pct", 0.0)
+                                tier_k = _get_conviction_tier(p)
+                                c_badge_text = "🔥 HIGH" if tier_k == "HIGH" else ("⚡ MEDIUM" if tier_k == "MEDIUM" else "⚠️ LOW")
+
+                                act_str = str(p.get("trade_action", "BUY")).upper()
+                                if "PE" in act_str:
+                                    act_icon = "🔴 BUY PE"
+                                elif "CE" in act_str:
+                                    act_icon = "🟢 BUY CE"
+                                elif "SELL" in act_str:
+                                    act_icon = "🔴 SELL"
+                                else:
+                                    act_icon = "🟢 BUY"
+
+                                comm_unit = ""
+                                if UniverseManager.is_commodity(sym_p):
+                                    comm_unit = f" ({UniverseManager.get_commodity_unit(sym_p)})"
+
+                                table_rows.append({
+                                    "Symbol": sym_p + comm_unit,
+                                    "Conviction": c_badge_text,
+                                    "Action": act_icon,
+                                    "Category": p.get("category", "General"),
+                                    "LTP (₹)": f"₹{ltp_val:,.2f}",
+                                    "Day Change": f"{chg_pct:+.2f}%",
+                                    "Entry (₹)": f"₹{p.get('entry_price', 0.0):,.2f}",
+                                    "Stop Loss (₹)": f"₹{p.get('tight_stop_loss', p.get('stop_loss', 0.0)):,.2f}",
+                                    "Target 1 (₹)": f"₹{p.get('target_1', 0.0):,.2f}",
+                                    "Target 2 (₹)": f"₹{p.get('target_2', 0.0):,.2f}",
+                                    "R:R Ratio": p.get("risk_reward_ratio", "—"),
+                                    "₹2k Risk Sizing": f"{p.get('shares_for_2k_risk', '—')} sh",
+                                    "Macro Alignment": p.get("macro_badge") or "—",
+                                    "Thesis Catalyst": p.get("thesis", "")[:100] + ("..." if len(p.get("thesis", "")) > 100 else "")
+                                })
+                            st.dataframe(pd.DataFrame(table_rows), use_container_width=True, hide_index=True)
+                        else:
+                            if conv_filter_opt.startswith("⚠️ Low"):
+                                st.success("✅ **Zero Low Conviction / Speculative Stocks**: All active candidates qualify under High or Medium conviction!")
+                            else:
+                                st.info("No candidates match the selected conviction tier and direction filter.")
+
+                    st.markdown("---")
+
+                    # Render Detailed Trade Plan Cards
+                    if conv_filter_opt == "✨ Split by Tiers (Grouped)":
+                        h_plans_filt = _apply_sorting(_apply_dir_filter(high_plans, conv_dir_opt), conv_sort_opt)
+                        m_plans_filt = _apply_sorting(_apply_dir_filter(med_plans, conv_dir_opt), conv_sort_opt)
+                        l_plans_filt = _apply_sorting(_apply_dir_filter(low_plans, conv_dir_opt), conv_sort_opt)
+
+                        # High Conviction Tier
+                        st.markdown(f"#### 🔥 High Conviction Setups ({len(h_plans_filt)})")
+                        if h_plans_filt:
+                            _render_plans_cards_grid(h_plans_filt, "conv_h")
+                        else:
+                            st.info("No High Conviction setups match the current filters.")
+
+                        st.markdown("---")
+
+                        # Medium Conviction Tier
+                        st.markdown(f"#### ⚡ Medium Conviction Setups ({len(m_plans_filt)})")
+                        if m_plans_filt:
+                            _render_plans_cards_grid(m_plans_filt, "conv_m")
+                        else:
+                            st.info("No Medium Conviction setups match the current filters.")
+
+                        st.markdown("---")
+
+                        # Low Conviction Tier
+                        st.markdown(f"#### ⚠️ Low / Speculative Conviction Setups ({len(l_plans_filt)})")
+                        if l_plans_filt:
+                            _render_plans_cards_grid(l_plans_filt, "conv_l")
+                        else:
+                            st.success("✅ **Zero Low Conviction / Speculative Stocks**: All active candidates meet high or medium institutional conviction standards!")
+                    else:
+                        if filtered_plans:
+                            _render_plans_cards_grid(filtered_plans, "conv_view")
+                        else:
+                            if conv_filter_opt.startswith("⚠️ Low"):
+                                st.success("✅ **Zero Low Conviction / Speculative Stocks**: No stocks flagged for elevated risk or macro degradation. All candidates qualify under High or Medium conviction!")
+                            else:
+                                st.info(f"No setups match the current filter selection ({conv_filter_opt}).")
+
                 # Render Category sub tabs
-                for sub_i, cat_k in enumerate(ordered_keys, start=1):
+                for sub_i, cat_k in enumerate(ordered_keys, start=2):
                     with ai_sub_tabs[sub_i]:
                         _render_plans_cards_grid(plans_by_cat[cat_k], f"cat_{cat_k.lower()}")
 
@@ -1931,8 +2242,8 @@ if run_btn or "cached_results" in st.session_state:
                         "Panic Resilient": panic_badge,
                         "Vol Confirmed (>2X)": vol_2x_badge,
                         "RVol (9d)": rvol_9_str,
-                        "RVol (20d)": f"{c['rvol']:.1f}x",
-                        "RSI (14)": c["rsi"],
+                        "RVol (20d)": f"{c.get('rvol', 1.0):.1f}x",
+                        "RSI (14)": c.get("rsi", "—"),
                         "Key Triggers": ", ".join(c.get("reasons", []))
                     }
                     if "recommended_strike" in c:

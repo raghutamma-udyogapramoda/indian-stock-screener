@@ -140,9 +140,27 @@ def logout_user():
     st.rerun()
 
 
+def login_user(username: str = "admin"):
+    """
+    Directly authenticates a user session without requiring a password.
+    Sets all required session variables and triggers a rerun into the dashboard.
+    """
+    clean_u = (username or "admin").strip().lower()
+    st.session_state["authenticated"] = True
+    st.session_state["username"] = clean_u
+    st.session_state["login_time"] = time.strftime("%Y-%m-%d %H:%M:%S")
+    is_adm = is_admin(clean_u)
+    role_str = "Administrator" if is_adm else "Trader"
+    st.toast(f"✅ Welcome, {clean_u.capitalize()} ({role_str})! Loading dashboard...", icon="🚀")
+    time.sleep(0.2)
+    st.rerun()
+
+
 def render_login_gate() -> bool:
     """
     Renders the login page if the user is not authenticated.
+    Provides instant 1-click login without any username/password entry,
+    as well as 1-click profiles and optional manual credentials.
     Returns True if user is authenticated, False otherwise (stops script execution).
     """
     if is_authenticated():
@@ -186,6 +204,15 @@ def render_login_gate() -> bool:
         margin-bottom: 0.8rem;
         letter-spacing: 0.5px;
     }
+    .one-click-card {
+        background: linear-gradient(135deg, rgba(41, 98, 255, 0.18) 0%, rgba(0, 230, 118, 0.15) 100%);
+        border: 1px solid rgba(0, 230, 118, 0.45);
+        border-radius: 10px;
+        padding: 14px 16px;
+        margin: 10px 0 12px 0;
+        text-align: center;
+        box-shadow: 0 4px 16px rgba(0, 230, 118, 0.08);
+    }
     </style>
     """, unsafe_allow_html=True)
 
@@ -201,96 +228,93 @@ def render_login_gate() -> bool:
         </div>
         """, unsafe_allow_html=True)
 
-        # Quick 1-Click Login Shortcut Buttons
-        st.markdown("<div style='font-size: 0.82rem; color: #A0AEC0; margin: 12px 0 6px 0;'><b>⚡ Quick Login (1-Click Fill):</b></div>", unsafe_allow_html=True)
-        q1, q2, q3 = st.columns(3)
-        if q1.button("👑 Guruteja", use_container_width=True, key="quick_guru"):
-            st.session_state["prefill_user"] = "guruteja"
-            st.session_state["prefill_pass"] = "guru@2026"
-            st.rerun()
-        if q2.button("👑 Raghavendra", use_container_width=True, key="quick_raghu"):
-            st.session_state["prefill_user"] = "raghavendra"
-            st.session_state["prefill_pass"] = "raghavendra@2026"
-            st.rerun()
-        if q3.button("👑 Naresh", use_container_width=True, key="quick_naresh"):
-            st.session_state["prefill_user"] = "naresh"
-            st.session_state["prefill_pass"] = "naresh@2026"
-            st.rerun()
-
-        prefill_u = st.session_state.get("prefill_user", "")
-        prefill_p = st.session_state.get("prefill_pass", "")
-
-        with st.form("login_form", clear_on_submit=False):
-            st.markdown("##### Sign in with authorized credentials")
-            username_in = st.text_input("Username", value=prefill_u, placeholder="Enter username", key="login_user_input")
-            password_in = st.text_input("Password", value=prefill_p, type="password", placeholder="Enter password", key="login_pass_input")
-            
-            submit_btn = st.form_submit_button("🔓 Sign In to Dashboard", type="primary", use_container_width=True)
-
-            if submit_btn:
-                if verify_credentials(username_in, password_in):
-                    st.session_state["authenticated"] = True
-                    st.session_state["username"] = username_in.strip().lower()
-                    st.session_state["login_time"] = time.strftime("%Y-%m-%d %H:%M:%S")
-                    is_adm = is_admin(username_in)
-                    role_str = "Administrator" if is_adm else "Trader"
-                    st.toast(f"✅ Welcome, {username_in.capitalize()} ({role_str})! Loading screener...", icon="🚀")
-                    time.sleep(0.4)
-                    st.rerun()
-                else:
-                    st.error("❌ Invalid username or password. Please verify your credentials from the list below.")
-
-        # Display Authorized Passwords directly on the page
+        # ⚡ PRIMARY 1-CLICK INSTANT LOGIN (NO USERNAME / PASSWORD REQUIRED)
         st.markdown("""
-        <div style="background: #1a1e29; border: 1px solid #2a2e39; border-radius: 10px; padding: 16px; margin-top: 14px; box-shadow: 0 4px 16px rgba(0,0,0,0.25);">
-            <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; border-bottom: 1px solid #2a2e39; padding-bottom: 8px;">
-                <span style="font-weight: 700; color: #FFD700; font-size: 0.92rem;">🔑 Authorized Users & Access Passwords</span>
-                <span style="background: rgba(255, 215, 0, 0.15); color: #FFD700; border: 1px solid #FFD700; border-radius: 10px; padding: 2px 8px; font-size: 0.7rem; font-weight: bold;">ADMIN ENABLED</span>
+        <div class="one-click-card">
+            <div style="font-weight: 800; color: #00E676; font-size: 1.05rem; letter-spacing: 0.3px; margin-bottom: 3px;">
+                ⚡ Fast Track: Instant Access
             </div>
-            <table style="width: 100%; border-collapse: collapse; font-size: 0.83rem; color: #E2E8F0;">
-                <thead>
-                    <tr style="border-bottom: 1px solid #333947; color: #A0AEC0; text-align: left;">
-                        <th style="padding: 6px 8px;">Name</th>
-                        <th style="padding: 6px 8px;">Username</th>
-                        <th style="padding: 6px 8px;">Password</th>
-                        <th style="padding: 6px 8px;">Access Level</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    <tr style="border-bottom: 1px solid #242936;">
-                        <td style="padding: 6px 8px; font-weight: 600; color: #FFFFFF;">Guruteja</td>
-                        <td style="padding: 6px 8px;"><code style="background:#0e1117; color:#64B5F6; padding: 2px 6px; border-radius: 4px;">guruteja</code></td>
-                        <td style="padding: 6px 8px;"><code style="background:#0e1117; color:#00E676; padding: 2px 6px; border-radius: 4px;">guru@2026</code></td>
-                        <td style="padding: 6px 8px;"><span style="color: #FFD700; font-weight: bold;">👑 Admin</span></td>
-                    </tr>
-                    <tr style="border-bottom: 1px solid #242936;">
-                        <td style="padding: 6px 8px; font-weight: 600; color: #FFFFFF;">Raghavendra</td>
-                        <td style="padding: 6px 8px;"><code style="background:#0e1117; color:#64B5F6; padding: 2px 6px; border-radius: 4px;">raghavendra</code></td>
-                        <td style="padding: 6px 8px;"><code style="background:#0e1117; color:#00E676; padding: 2px 6px; border-radius: 4px;">raghavendra@2026</code></td>
-                        <td style="padding: 6px 8px;"><span style="color: #FFD700; font-weight: bold;">👑 Admin</span></td>
-                    </tr>
-                    <tr style="border-bottom: 1px solid #242936;">
-                        <td style="padding: 6px 8px; font-weight: 600; color: #FFFFFF;">Naresh</td>
-                        <td style="padding: 6px 8px;"><code style="background:#0e1117; color:#64B5F6; padding: 2px 6px; border-radius: 4px;">naresh</code></td>
-                        <td style="padding: 6px 8px;"><code style="background:#0e1117; color:#00E676; padding: 2px 6px; border-radius: 4px;">naresh@2026</code></td>
-                        <td style="padding: 6px 8px;"><span style="color: #FFD700; font-weight: bold;">👑 Admin</span></td>
-                    </tr>
-                    <tr style="border-bottom: 1px solid #242936;">
-                        <td style="padding: 6px 8px; font-weight: 600; color: #FFFFFF;">System Admin</td>
-                        <td style="padding: 6px 8px;"><code style="background:#0e1117; color:#64B5F6; padding: 2px 6px; border-radius: 4px;">admin</code></td>
-                        <td style="padding: 6px 8px;"><code style="background:#0e1117; color:#00E676; padding: 2px 6px; border-radius: 4px;">admin@2026</code></td>
-                        <td style="padding: 6px 8px;"><span style="color: #FFD700; font-weight: bold;">👑 Admin</span></td>
-                    </tr>
-                    <tr>
-                        <td style="padding: 6px 8px; font-weight: 600; color: #FFFFFF;">Standard Trader</td>
-                        <td style="padding: 6px 8px;"><code style="background:#0e1117; color:#64B5F6; padding: 2px 6px; border-radius: 4px;">trader</code></td>
-                        <td style="padding: 6px 8px;"><code style="background:#0e1117; color:#00E676; padding: 2px 6px; border-radius: 4px;">nsemcx2026</code></td>
-                        <td style="padding: 6px 8px;"><span style="color: #A0AEC0;">👤 Trader</span></td>
-                    </tr>
-                </tbody>
-            </table>
+            <div style="font-size: 0.82rem; color: #E2E8F0;">
+                Click below to enter the dashboard immediately with full privileges. <b>No username or password required.</b>
+            </div>
         </div>
         """, unsafe_allow_html=True)
+
+        if st.button("🚀 1-Click Login (Instant Access)", type="primary", use_container_width=True, key="btn_one_click_instant"):
+            login_user(username="admin")
+
+        # Quick 1-Click Login by Profile
+        st.markdown("<div style='font-size: 0.8rem; color: #A0AEC0; margin: 14px 0 6px 0; text-align: center;'>— Or 1-Click Login as a specific team account —</div>", unsafe_allow_html=True)
+        q1, q2, q3, q4 = st.columns(4)
+        if q1.button("👑 Guruteja", use_container_width=True, key="quick_guru", help="Instant 1-Click Login as Guruteja (Admin)"):
+            login_user(username="guruteja")
+        if q2.button("👑 Raghavendra", use_container_width=True, key="quick_raghu", help="Instant 1-Click Login as Raghavendra (Admin)"):
+            login_user(username="raghavendra")
+        if q3.button("👑 Naresh", use_container_width=True, key="quick_naresh", help="Instant 1-Click Login as Naresh (Admin)"):
+            login_user(username="naresh")
+        if q4.button("👤 Trader", use_container_width=True, key="quick_trader", help="Instant 1-Click Login as Standard Trader"):
+            login_user(username="trader")
+
+        # Optional manual credentials expandable form
+        with st.expander("🔑 Manual Sign In (Optional Credentials Form)", expanded=False):
+            with st.form("login_form", clear_on_submit=False):
+                st.markdown("##### Sign in with custom credentials")
+                username_in = st.text_input("Username", value="", placeholder="Enter username", key="login_user_input")
+                password_in = st.text_input("Password", value="", type="password", placeholder="Enter password", key="login_pass_input")
+                
+                submit_btn = st.form_submit_button("🔓 Sign In to Dashboard", type="secondary", use_container_width=True)
+
+                if submit_btn:
+                    if verify_credentials(username_in, password_in):
+                        login_user(username=username_in)
+                    else:
+                        st.error("❌ Invalid username or password. Please verify your credentials.")
+
+            # Display Authorized Passwords directly inside the expander for reference
+            st.markdown("""
+            <div style="background: #1a1e29; border: 1px solid #2a2e39; border-radius: 8px; padding: 12px; margin-top: 10px;">
+                <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; border-bottom: 1px solid #2a2e39; padding-bottom: 6px;">
+                    <span style="font-weight: 700; color: #FFD700; font-size: 0.85rem;">🔑 Reference Accounts</span>
+                    <span style="background: rgba(255, 215, 0, 0.15); color: #FFD700; border: 1px solid #FFD700; border-radius: 10px; padding: 1px 6px; font-size: 0.68rem; font-weight: bold;">ADMIN ENABLED</span>
+                </div>
+                <table style="width: 100%; border-collapse: collapse; font-size: 0.78rem; color: #E2E8F0;">
+                    <thead>
+                        <tr style="border-bottom: 1px solid #333947; color: #A0AEC0; text-align: left;">
+                            <th style="padding: 4px 6px;">User</th>
+                            <th style="padding: 4px 6px;">Password</th>
+                            <th style="padding: 4px 6px;">Role</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr style="border-bottom: 1px solid #242936;">
+                            <td style="padding: 4px 6px;"><code style="background:#0e1117; color:#64B5F6;">guruteja</code></td>
+                            <td style="padding: 4px 6px;"><code style="background:#0e1117; color:#00E676;">guru@2026</code></td>
+                            <td style="padding: 4px 6px; color: #FFD700;">👑 Admin</td>
+                        </tr>
+                        <tr style="border-bottom: 1px solid #242936;">
+                            <td style="padding: 4px 6px;"><code style="background:#0e1117; color:#64B5F6;">raghavendra</code></td>
+                            <td style="padding: 4px 6px;"><code style="background:#0e1117; color:#00E676;">raghavendra@2026</code></td>
+                            <td style="padding: 4px 6px; color: #FFD700;">👑 Admin</td>
+                        </tr>
+                        <tr style="border-bottom: 1px solid #242936;">
+                            <td style="padding: 4px 6px;"><code style="background:#0e1117; color:#64B5F6;">naresh</code></td>
+                            <td style="padding: 4px 6px;"><code style="background:#0e1117; color:#00E676;">naresh@2026</code></td>
+                            <td style="padding: 4px 6px; color: #FFD700;">👑 Admin</td>
+                        </tr>
+                        <tr style="border-bottom: 1px solid #242936;">
+                            <td style="padding: 4px 6px;"><code style="background:#0e1117; color:#64B5F6;">admin</code></td>
+                            <td style="padding: 4px 6px;"><code style="background:#0e1117; color:#00E676;">admin@2026</code></td>
+                            <td style="padding: 4px 6px; color: #FFD700;">👑 Admin</td>
+                        </tr>
+                        <tr>
+                            <td style="padding: 4px 6px;"><code style="background:#0e1117; color:#64B5F6;">trader</code></td>
+                            <td style="padding: 4px 6px;"><code style="background:#0e1117; color:#00E676;">nsemcx2026</code></td>
+                            <td style="padding: 4px 6px; color: #A0AEC0;">👤 Trader</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+            """, unsafe_allow_html=True)
 
     return False
 
