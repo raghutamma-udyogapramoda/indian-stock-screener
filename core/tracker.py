@@ -145,18 +145,40 @@ class PortfolioTracker:
         cls,
         username: str,
         symbol: str,
-        buy_price: float,
-        qty: float,
+        buy_price: float = 0.0,
+        qty: float = 1.0,
         asset_type: str = "EQUITY",
         stop_loss: Optional[float] = None,
         target: Optional[float] = None,
         notes: str = ""
     ) -> dict:
-        """Adds a new position to the user's tracker."""
+        """Adds a new position to the user's tracker, auto-fetching live market price if buy_price <= 0."""
         raw_sym = symbol.strip().upper()
         underlying = cls.get_underlying_symbol(raw_sym)
         now_str = datetime.now().strftime("%Y-%m-%d %H:%M")
         pos_id = f"{underlying}_{int(datetime.now().timestamp())}"
+
+        # Auto-detect asset type if default EQUITY was provided
+        if asset_type == "EQUITY":
+            if UniverseManager.is_commodity(underlying):
+                asset_type = "COMMODITY"
+            elif UniverseManager.is_index(underlying):
+                asset_type = "INDEX"
+            elif " CE" in raw_sym:
+                asset_type = "OPTION_CE"
+            elif " PE" in raw_sym:
+                asset_type = "OPTION_PE"
+            elif " FUT" in raw_sym:
+                asset_type = "FUTURES"
+
+        # If buy_price is 0 or omitted, fetch live market price immediately
+        if float(buy_price) <= 0:
+            quotes = cls.fetch_live_quotes([raw_sym, underlying])
+            q = quotes.get(raw_sym) or quotes.get(underlying)
+            if q and q.get("price") and q["price"] > 0:
+                buy_price = float(q["price"])
+            else:
+                buy_price = 100.0
 
         # If SL or target not provided, calculate default estimates
         if not stop_loss:
@@ -170,7 +192,7 @@ class PortfolioTracker:
             "underlying": underlying,
             "asset_type": asset_type.upper(),
             "buy_price": float(buy_price),
-            "qty": float(qty),
+            "qty": float(qty) if float(qty) > 0 else 1.0,
             "buy_date": now_str[:10],
             "stop_loss": float(stop_loss),
             "target": float(target),

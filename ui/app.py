@@ -49,7 +49,7 @@ except Exception:
 
 # Guard against Streamlit Cloud stale in-memory module caching across git updates
 import importlib
-_APP_BUILD_SIG = "2026_10_16_one_click_login_v1"
+_APP_BUILD_SIG = "2026_10_16_tracker_typeahead_v2"
 if sys.modules.get("__CURRENT_BUILD_SIG__") != _APP_BUILD_SIG:
     for mod_name in list(sys.modules.keys()):
         if any(mod_name == pkg or mod_name.startswith(pkg + ".") for pkg in ("core", "screeners", "ai", "providers")):
@@ -397,41 +397,56 @@ def render_item_tracker_view(current_user: str, data_dict: Dict[str, pd.DataFram
                 time.sleep(0.3)
                 st.rerun()
 
-    # Form: Add Position Manually (Kept outside fragment so form typing is never interrupted by 10s auto-refresh)
-    with st.expander("➕ Add Stock / Index / Option / Future to Tracker", expanded=(len(positions) == 0)):
-        with st.form("manual_add_tracker_form", clear_on_submit=True):
-            f_col1, f_col2, f_col3 = st.columns(3)
-            new_sym = f_col1.text_input("Asset Symbol / Contract", placeholder="e.g. RELIANCE, NIFTY 25000 CE, GOLD")
-            new_type = f_col2.selectbox("Asset Type", ["EQUITY", "INDEX", "FUTURES", "OPTION_CE", "OPTION_PE", "COMMODITY"])
-            new_buy = f_col3.number_input("Your Buy / Entry Price (₹)", min_value=0.0, step=1.0, value=0.0, help="Enter the exact purchase price at which you bought this asset")
+    # ➕ Add Stock with Type-Ahead Search (ONLY Stock Name)
+    all_searchable_stocks = UniverseManager.get_all_searchable_symbols()
 
-            f_col4, f_col5, f_col6 = st.columns(3)
-            new_qty = f_col4.number_input("Quantity / Units / Lots", min_value=1.0, step=1.0, value=1.0)
-            new_sl = f_col5.number_input("Stop Loss (₹, optional)", min_value=0.0, step=1.0, value=0.0)
-            new_tgt = f_col6.number_input("Target Price (₹, optional)", min_value=0.0, step=1.0, value=0.0)
+    st.markdown("""
+    <div style="background: #131722; border: 1px solid #2a2e39; border-radius: 8px; padding: 12px 16px; margin: 10px 0 14px 0;">
+        <div style="display: flex; justify-content: space-between; align-items: center;">
+            <span style="font-weight: 700; color: #00E676; font-size: 0.95rem;">➕ Add Stock to Live Tracker</span>
+            <span style="color: #787b86; font-size: 0.78rem;">⚡ Real-time type-ahead search active across 500+ Indian assets</span>
+        </div>
+        <div style="color: #A0AEC0; font-size: 0.8rem; margin-top: 4px;">
+            Search and select any stock by name or symbol. Live CMP, stop loss, and target are automatically tracked.
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
 
-            new_notes = st.text_input("Strategy Notes (Optional)", placeholder="e.g. Breakout setup from screener, monthly expiry hedge")
+    with st.form("typeahead_add_tracker_form", clear_on_submit=True):
+        col_sym, col_add = st.columns([3.8, 1.2])
+        with col_sym:
+            selected_stock = st.selectbox(
+                "Stock Name",
+                options=all_searchable_stocks,
+                index=None,
+                format_func=UniverseManager.get_display_name,
+                placeholder="🔍 Type stock name or symbol (e.g. RELIANCE, TCS, INFY, TATASTEEL, GOLDM)...",
+                accept_new_options=True,
+                key=f"typeahead_stock_selector_{target_user}",
+                label_visibility="collapsed",
+                help="Type any letters to search suggestions across 500+ Indian stocks, commodities, and indices."
+            )
+        with col_add:
+            add_submit = st.form_submit_button("➕ Add Stock", type="primary", use_container_width=True)
 
-            add_submit = st.form_submit_button("➕ Add to My Live Tracker", type="primary", use_container_width=True)
-            if add_submit:
-                if not new_sym.strip():
-                    st.error("Please provide a valid symbol.")
-                elif float(new_buy) <= 0:
-                    st.error("Please enter your actual Buy / Entry Price (greater than ₹0).")
-                else:
-                    PortfolioTracker.add_position(
-                        username=target_user,
-                        symbol=new_sym.strip(),
-                        buy_price=float(new_buy),
-                        qty=float(new_qty),
-                        asset_type=new_type,
-                        stop_loss=float(new_sl) if new_sl > 0 else None,
-                        target=float(new_tgt) if new_tgt > 0 else None,
-                        notes=new_notes
-                    )
-                    st.toast(f"✅ Added {new_sym.upper()} to {target_user.upper()}'s tracker!", icon="📌")
-                    time.sleep(0.4)
-                    st.rerun()
+        if add_submit:
+            raw_input = str(selected_stock or "").strip()
+            if not raw_input:
+                st.error("⚠️ Please type or select a stock name.")
+            else:
+                # Extract clean symbol if formatted string (e.g., 'RELIANCE - Reliance Industries Ltd')
+                clean_sym = UniverseManager.to_clean_symbol(raw_input.split(" - ")[0].split(" — ")[0].strip()).upper()
+
+                # Automatically resolve live CMP and add to portfolio
+                pos = PortfolioTracker.add_position(
+                    username=target_user,
+                    symbol=clean_sym,
+                    notes="Added via Type-Ahead Search"
+                )
+                cmp_val = pos.get("buy_price", 0.0)
+                st.toast(f"✅ Added {clean_sym} to {target_user.upper()}'s live tracker (CMP: ₹{cmp_val:,.2f})!", icon="📌")
+                time.sleep(0.3)
+                st.rerun()
 
     st.markdown("---")
 

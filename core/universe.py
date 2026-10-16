@@ -123,9 +123,261 @@ YFINANCE_TO_INDEX = {
     "^INDIAVIX": "INDIAVIX",
 }
 
+# Rich Company Name Reference Dictionary for Type-Ahead Search Suggestions
+STOCK_COMPANY_NAMES = {
+    # Top Nifty 50 & Heavyweights
+    "RELIANCE": "Reliance Industries Ltd",
+    "TCS": "Tata Consultancy Services Ltd",
+    "HDFCBANK": "HDFC Bank Ltd",
+    "INFY": "Infosys Ltd",
+    "ICICIBANK": "ICICI Bank Ltd",
+    "BHARTIARTL": "Bharti Airtel Ltd",
+    "SBIN": "State Bank of India (SBI)",
+    "LICI": "Life Insurance Corporation of India (LIC)",
+    "ITC": "ITC Ltd",
+    "HINDUNILVR": "Hindustan Unilever Ltd",
+    "LT": "Larsen & Toubro Ltd",
+    "BAJFINANCE": "Bajaj Finance Ltd",
+    "HCLTECH": "HCL Technologies Ltd",
+    "MARUTI": "Maruti Suzuki India Ltd",
+    "SUNPHARMA": "Sun Pharmaceutical Industries Ltd",
+    "ONGC": "Oil and Natural Gas Corporation Ltd",
+    "KOTAKBANK": "Kotak Mahindra Bank Ltd",
+    "TITAN": "Titan Company Ltd",
+    "TMPV": "Tata Motors Ltd",
+    "TATAMOTORS": "Tata Motors Ltd",
+    "NTPC": "NTPC Ltd",
+    "AXISBANK": "Axis Bank Ltd",
+    "ADANIENT": "Adani Enterprises Ltd",
+    "COALINDIA": "Coal India Ltd",
+    "POWERGRID": "Power Grid Corporation of India Ltd",
+    "ASIANPAINT": "Asian Paints Ltd",
+    "ULTRACEMCO": "UltraTech Cement Ltd",
+    "BAJAJFINSV": "Bajaj Finserv Ltd",
+    "M&M": "Mahindra & Mahindra Ltd",
+    "TATASTEEL": "Tata Steel Ltd",
+    "SIEMENS": "Siemens India Ltd",
+    "GRASIM": "Grasim Industries Ltd",
+    "TECHM": "Tech Mahindra Ltd",
+    "NESTLEIND": "Nestle India Ltd",
+    "JSWSTEEL": "JSW Steel Ltd",
+    "ADANIPORTS": "Adani Ports and Special Economic Zone Ltd",
+    "SBILIFE": "SBI Life Insurance Company Ltd",
+    "WIPRO": "Wipro Ltd",
+    "HDFCLIFE": "HDFC Life Insurance Company Ltd",
+    "BPCL": "Bharat Petroleum Corporation Ltd",
+    "TRENT": "Trent Ltd (Westside / Zudio)",
+    "BRITANNIA": "Britannia Industries Ltd",
+    "CIPLA": "Cipla Ltd",
+    "TATACONSUM": "Tata Consumer Products Ltd",
+    "BAJAJ-AUTO": "Bajaj Auto Ltd",
+    "HINDALCO": "Hindalco Industries Ltd",
+    "DIVISLAB": "Divi's Laboratories Ltd",
+    "EICHERMOT": "Eicher Motors Ltd (Royal Enfield)",
+    "APOLLOHOSP": "Apollo Hospitals Enterprise Ltd",
+    "SHRIRAMFIN": "Shriram Finance Ltd",
+    "BEL": "Bharat Electronics Ltd",
+    "HAL": "Hindustan Aeronautics Ltd",
+    "DLF": "DLF Real Estate Ltd",
+    "VEDL": "Vedanta Ltd",
+    "TVSMOTOR": "TVS Motor Company Ltd",
+    "INDIGO": "InterGlobe Aviation Ltd (IndiGo)",
+    "ZOMATO": "Zomato Ltd (Eternal)",
+    "JIOFIN": "Jio Financial Services Ltd",
+    "PFC": "Power Finance Corporation Ltd",
+    "RECLTD": "REC Ltd",
+    "TATAPOWER": "Tata Power Company Ltd",
+    "TATACHEM": "Tata Chemicals Ltd",
+    "TATAELXSI": "Tata Elxsi Ltd",
+    "TATATECH": "Tata Technologies Ltd",
+    "TATACOMM": "Tata Communications Ltd",
+    "POLYCAB": "Polycab India Ltd",
+    "PERSISTENT": "Persistent Systems Ltd",
+    "COFORGE": "Coforge Ltd",
+    "LTTS": "L&T Technology Services Ltd",
+    "LTIM": "LTIMindtree Ltd",
+    "IRCTC": "Indian Railway Catering and Tourism Corp",
+    "IRFC": "Indian Railway Finance Corporation",
+    "RVNL": "Rail Vikas Nigam Ltd",
+    "MAZDOCK": "Mazagon Dock Shipbuilders Ltd",
+    "COCHINSHIP": "Cochin Shipyard Ltd",
+    "BHEL": "Bharat Heavy Electricals Ltd",
+    "IOC": "Indian Oil Corporation Ltd",
+    "GAIL": "GAIL (India) Ltd",
+    "SAIL": "Steel Authority of India Ltd",
+    "NMDC": "NMDC Ltd",
+    "NATIONALUM": "National Aluminium Company Ltd",
+    "CANBK": "Canara Bank",
+    "BANKBARODA": "Bank of Baroda",
+    "PNB": "Punjab National Bank",
+    "UNIONBANK": "Union Bank of India",
+    "IDFCFIRSTB": "IDFC First Bank Ltd",
+    "FEDERALBNK": "Federal Bank Ltd",
+    "AUBANK": "AU Small Finance Bank Ltd",
+    "INDUSINDBK": "IndusInd Bank Ltd",
+    "CHOLAFIN": "Cholamandalam Investment and Finance",
+    "MUTHOOTFIN": "Muthoot Finance Ltd",
+    "MANAPPURAM": "Manappuram Finance Ltd",
+    "HDFCAMC": "HDFC Asset Management Company Ltd",
+    "MCX": "Multi Commodity Exchange of India Ltd",
+    "BSE": "BSE Ltd",
+    "CDSL": "Central Depository Services (India) Ltd",
+    "CAMS": "Computer Age Management Services Ltd",
+    "DIXON": "Dixon Technologies (India) Ltd",
+    "AMBUJACEM": "Ambuja Cements Ltd",
+    "ACC": "ACC Ltd",
+    "SHREECEM": "Shree Cement Ltd",
+    "PIDILITIND": "Pidilite Industries Ltd (Fevicol)",
+    "BERGEPAINT": "Berger Paints India Ltd",
+    "HAVELLS": "Havells India Ltd",
+    "VOLTAS": "Voltas Ltd",
+    "CROMPTON": "Crompton Greaves Consumer Electricals",
+    "GODREJCP": "Godrej Consumer Products Ltd",
+    "GODREJPROP": "Godrej Properties Ltd",
+    "OBEROIRLTY": "Oberoi Realty Ltd",
+    "COLPAL": "Colgate-Palmolive (India) Ltd",
+    "DABUR": "Dabur India Ltd",
+    "MARICO": "Marico Ltd",
+    "UNITDSPR": "United Spirits Ltd (Diageo)",
+    "UBL": "United Breweries Ltd",
+    "JUBLFOOD": "Jubilant FoodWorks Ltd (Domino's)",
+    "PAGEIND": "Page Industries Ltd (Jockey)",
+    "BATAINDIA": "Bata India Ltd",
+    "ABFRL": "Aditya Birla Fashion and Retail Ltd",
+    "NYKAA": "FSN E-Commerce Ventures (Nykaa)",
+    "PAYTM": "One97 Communications (Paytm)",
+    "POLICYBZR": "PB Fintech Ltd (Policybazaar)",
+    "DELHIVERY": "Delhivery Ltd",
+    "MOTHERSON": "Samvardhana Motherson International",
+    "BHARATFORG": "Bharat Forge Ltd",
+    "ASHOKLEY": "Ashok Leyland Ltd",
+    "ESCORTS": "Escorts Kubota Ltd",
+    "MRF": "MRF Ltd",
+    "APOLLOTYRE": "Apollo Tyres Ltd",
+    "BALKRISIND": "Balkrishna Industries Ltd",
+    "EXIDEIND": "Exide Industries Ltd",
+    "AMARAJABAT": "Amara Raja Energy & Mobility Ltd",
+    "DRREDDY": "Dr. Reddy's Laboratories Ltd",
+    "LUPIN": "Lupin Ltd",
+    "AUROPHARMA": "Aurobindo Pharma Ltd",
+    "ALKEM": "Alkem Laboratories Ltd",
+    "TORNTPHARM": "Torrent Pharmaceuticals Ltd",
+    "GLENMARK": "Glenmark Pharmaceuticals Ltd",
+    "BIOCON": "Biocon Ltd",
+    "IPCALAB": "IPCA Laboratories Ltd",
+    "LAURUSLABS": "Laurus Labs Ltd",
+    "GRANULES": "Granules India Ltd",
+    "SYNGENE": "Syngene International Ltd",
+    "LALPATHLAB": "Dr. Lal PathLabs Ltd",
+    "METROPOLIS": "Metropolis Healthcare Ltd",
+    "DEEPAKNTR": "Deepak Nitrite Ltd",
+    "SRF": "SRF Ltd",
+    "AARTIIND": "Aarti Industries Ltd",
+    "ATUL": "Atul Ltd",
+    "NAVINFLUOR": "Navin Fluorine International Ltd",
+    "PIIND": "PI Industries Ltd",
+    "UPL": "UPL Ltd",
+    "COROMANDEL": "Coromandel International Ltd",
+    "CHAMBLFERT": "Chambal Fertilisers and Chemicals",
+    "GNFC": "Gujarat Narmada Valley Fertilizers",
+    "IGL": "Indraprastha Gas Ltd",
+    "MGL": "Mahanagar Gas Ltd",
+    "GUJGASLTD": "Gujarat Gas Ltd",
+    "PETRONET": "Petronet LNG Ltd",
+    "CONCOR": "Container Corporation of India Ltd",
+    "GMRAIRPORT": "GMR Airports Infrastructure Ltd",
+    "PVRINOX": "PVR INOX Ltd",
+    "SUNTV": "Sun TV Network Ltd",
+    "ZEEL": "Zee Entertainment Enterprises Ltd",
+    "NAUKRI": "Info Edge (India) Ltd (Naukri.com)",
+    "INDIAMART": "IndiaMART InterMESH Ltd",
+    "JUSTDIAL": "Just Dial Ltd",
+    "INDHOTEL": "The Indian Hotels Company Ltd (Taj)",
+    # Commodities
+    "GOLDM": "MCX Gold Mini (100g Lot)",
+    "SILVERM": "MCX Silver Mini (5kg Lot)",
+    "GOLD": "MCX Gold Standard (1kg Lot)",
+    "SILVER": "MCX Silver Standard (30kg Lot)",
+    "CRUDEOIL": "MCX Crude Oil (100 bbl)",
+    "NATURALGAS": "MCX Natural Gas (1250 mmBtu)",
+    "COPPER": "MCX Copper (2500 kg)",
+    "ZINC": "MCX Zinc (5000 kg)",
+    "ALUMINIUM": "MCX Aluminium (5000 kg)",
+    # Indices
+    "NIFTY": "NIFTY 50 Benchmark Index",
+    "BANKNIFTY": "BANK NIFTY Banking Index",
+    "SENSEX": "BSE SENSEX 30 Benchmark",
+    "FINNIFTY": "NIFTY Financial Services Index",
+    "MIDCPNIFTY": "NIFTY Midcap 50 Index",
+    "NIFTYIT": "NIFTY IT Sectoral Index",
+    "INDIAVIX": "India VIX Volatility Index"
+}
+
+_SEARCHABLE_SYMBOLS_CACHE: List[str] = []
+
 
 class UniverseManager:
     """Manages stock universe definitions and handles exchange ticker conversions."""
+
+    @classmethod
+    def get_all_searchable_symbols(cls) -> List[str]:
+        """
+        Loads and returns a unified, alphabetically sorted, deduplicated list
+        of all searchable Indian stocks (NIFTY 500, F&O), MCX Commodities, and Indices.
+        Cached in memory for instantaneous type-ahead searches.
+        """
+        global _SEARCHABLE_SYMBOLS_CACHE
+        if _SEARCHABLE_SYMBOLS_CACHE:
+            return _SEARCHABLE_SYMBOLS_CACHE
+
+        all_syms = set()
+        try:
+            for s in cls._load_nifty_500():
+                if s:
+                    all_syms.add(s.strip().upper())
+        except Exception:
+            pass
+
+        try:
+            for s in cls._load_fno():
+                if s:
+                    all_syms.add(s.strip().upper())
+        except Exception:
+            pass
+
+        try:
+            for s in cls._load_mcx_commodities():
+                if s:
+                    all_syms.add(s.strip().upper())
+        except Exception:
+            pass
+
+        try:
+            for s in cls._load_indices():
+                if s:
+                    all_syms.add(s.strip().upper())
+        except Exception:
+            pass
+
+        for s in STOCK_COMPANY_NAMES.keys():
+            all_syms.add(s)
+
+        _SEARCHABLE_SYMBOLS_CACHE = sorted(list(all_syms))
+        return _SEARCHABLE_SYMBOLS_CACHE
+
+    @classmethod
+    def get_display_name(cls, symbol: str) -> str:
+        """
+        Returns a rich display name: e.g. 'RELIANCE — Reliance Industries Ltd'
+        or 'TCS — Tata Consultancy Services Ltd' for type-ahead fuzzy searching.
+        """
+        if not symbol:
+            return ""
+        clean = cls.to_clean_symbol(symbol)
+        comp = STOCK_COMPANY_NAMES.get(clean)
+        if comp:
+            return f"{clean} - {comp}"
+        return clean
 
     @staticmethod
     def get_tickers(universe_name: str = "NIFTY_50") -> List[str]:
