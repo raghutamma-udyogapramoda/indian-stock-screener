@@ -150,9 +150,13 @@ class PortfolioTracker:
         asset_type: str = "EQUITY",
         stop_loss: Optional[float] = None,
         target: Optional[float] = None,
-        notes: str = ""
+        notes: str = "",
+        quantity: Optional[float] = None,
+        **kwargs
     ) -> dict:
         """Adds a new position to the user's tracker, auto-fetching live market price if buy_price <= 0."""
+        if quantity is not None:
+            qty = quantity
         raw_sym = symbol.strip().upper()
         underlying = cls.get_underlying_symbol(raw_sym)
         now_str = datetime.now().strftime("%Y-%m-%d %H:%M")

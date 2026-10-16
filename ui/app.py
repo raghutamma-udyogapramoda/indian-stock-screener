@@ -49,7 +49,7 @@ except Exception:
 
 # Guard against Streamlit Cloud stale in-memory module caching across git updates
 import importlib
-_APP_BUILD_SIG = "2026_10_16_tracker_typeahead_v2"
+_APP_BUILD_SIG = "2026_10_16_tracker_fix_v3"
 if sys.modules.get("__CURRENT_BUILD_SIG__") != _APP_BUILD_SIG:
     for mod_name in list(sys.modules.keys()):
         if any(mod_name == pkg or mod_name.startswith(pkg + ".") for pkg in ("core", "screeners", "ai", "providers")):
@@ -1151,7 +1151,7 @@ if run_btn or "cached_results" in st.session_state:
                                 symbol=sym_name,
                                 asset_type=t_type,
                                 buy_price=float(t_entry),
-                                quantity=float(t_qty),
+                                qty=float(t_qty),
                                 stop_loss=float(t_sl),
                                 target=float(default_tgt),
                                 notes=f"Action Level setup ({s['status'][:30]})"
@@ -1566,7 +1566,7 @@ if run_btn or "cached_results" in st.session_state:
                                     symbol=d_sym,
                                     asset_type=t_type,
                                     buy_price=float(t_entry),
-                                    quantity=float(t_qty),
+                                    qty=float(t_qty),
                                     stop_loss=float(t_sl),
                                     target=float(t_tgt),
                                     notes=t_notes
