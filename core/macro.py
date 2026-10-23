@@ -164,6 +164,8 @@ class MacroMarketEngine:
     to establish the prevailing market regime and sector-specific macro forces.
     """
 
+    _cached_macro: Optional[Dict[str, Any]] = None
+
     @classmethod
     def _get_default_macro_dict(cls, error_msg: str = "") -> Dict[str, Any]:
         """Provides a safe, resilient baseline macro context if computations or network fail."""

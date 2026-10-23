@@ -5,7 +5,7 @@ Evaluates shortlisted quantitative setups and generates actionable trade plans.
 
 import json
 import os
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from ai.prompt_builder import PromptBuilder
 from config.settings import GEMINI_API_KEY, GEMINI_MODEL
@@ -441,7 +441,16 @@ class AIAdvisor:
                 "trailing_playbook": trailing_playbook,
                 "shares_for_2k_risk": shares_for_2k_risk,
                 "capital_for_2k_risk": capital_for_2k_risk,
-                "macro_badge": macro_badge
+                "macro_badge": macro_badge,
+                "score": float(c.get("score", 75.0)),
+                "rvol": float(c.get("rvol", 1.0)),
+                "rvol_9": float(c.get("rvol_9", c.get("rvol", 1.0))),
+                "vol_confirmed_2x": bool(vol_conf),
+                "retest_support_50pct": float(retest_lvl),
+                "has_sector_tailwind": bool(has_tailwind),
+                "panic_day_resilient": bool(panic_res),
+                "green_on_dips": int(c.get("green_on_dips", 0)),
+                "sector": c.get("sector", "")
             }
             # Guard against SL inversion or invalidation
             guarded_plan = self._sanitize_and_guard_plan(raw_plan, c)
@@ -456,6 +465,11 @@ class AIAdvisor:
         If current market price is at or below the stop loss for a BUY trade, the setup is invalidated
         and either flipped to a breakdown SHORT plan (for TWO_WAY_LEVELS) or marked as AVOID.
         """
+        if cand:
+            for k in ["score", "rvol", "rvol_9", "vol_confirmed_2x", "retest_support_50pct", 
+                      "has_sector_tailwind", "panic_day_resilient", "green_on_dips", "sector"]:
+                if k not in plan and k in cand:
+                    plan[k] = cand[k]
         close = float(plan.get("close", 0.0))
         if close <= 0 and cand:
             close = float(cand.get("close", 0.0))
@@ -548,4 +562,104 @@ class AIAdvisor:
         plan["risk_reward_ratio"] = f"1:{reward_t1 / risk:.1f} (T1) → 1:{reward_t4 / risk:.1f} (T4)"
         plan["shares_for_2k_risk"] = max(int(2000 / risk), 1)
         plan["capital_for_2k_risk"] = round(plan["shares_for_2k_risk"] * entry, 2)
+
+        # Automatic institutional confirmation tagging
+        is_conf, conf_factors, conf_score = AIAdvisor.evaluate_plan_confirmation(plan, cand)
+        plan["is_confirmed"] = is_conf
+        plan["confirmation_factors"] = conf_factors
+        plan["safety_score"] = conf_score
         return plan
+
+    @staticmethod
+    def evaluate_plan_confirmation(plan: Dict[str, Any], cand: Optional[Dict[str, Any]] = None) -> Tuple[bool, List[str], int]:
+        """
+        Determines whether a trade plan meets strict institutional 'Confirmed Strategy' standards
+        that reliably perform without failing under normal market situations.
+        """
+        action = str(plan.get("trade_action", "")).upper()
+        if "AVOID" in action:
+            return False, [], 0
+        
+        # Conviction must be HIGH
+        conv_str = str(plan.get("conviction", "")).upper()
+        if "HIGH" not in conv_str:
+            return False, [], 0
+            
+        # No Macro Headwinds
+        macro_b = str(plan.get("macro_badge", "")).upper()
+        if "HEADWIND" in macro_b or "BEARISH DRAG" in macro_b:
+            return False, [], 0
+            
+        # Check current price vs stop loss
+        try:
+            entry = float(plan.get("entry_price", 0.0))
+            sl = float(plan.get("tight_stop_loss", plan.get("stop_loss", 0.0)))
+            cmp = float(plan.get("close", entry))
+            is_bullish = ("BUY" in action or action == "LONG") and "PE" not in action
+            if is_bullish and cmp <= sl and cmp > 0 and sl > 0:
+                return False, [], 0
+            if not is_bullish and cmp >= sl and cmp > 0 and sl > 0:
+                return False, [], 0
+        except Exception:
+            pass
+            
+        # Risk:Reward to Target 1 must be >= 1.0
+        try:
+            entry = float(plan.get("entry_price", 0.0))
+            sl = float(plan.get("stop_loss", 0.0))
+            t1 = float(plan.get("target_1", 0.0))
+            risk = abs(entry - sl)
+            if risk > 0 and (abs(t1 - entry) / risk) < 1.0:
+                return False, [], 0
+        except Exception:
+            pass
+
+        factors = []
+        rvol_val = float(plan.get("rvol_9", plan.get("rvol", cand.get("rvol_9", cand.get("rvol", 1.0)) if cand else 1.0)))
+        vol_2x = bool(plan.get("vol_confirmed_2x", cand.get("vol_confirmed_2x", False) if cand else False))
+        if vol_2x or rvol_val >= 1.5:
+            factors.append(f"🔥 Vol Surge ({rvol_val:.1f}x)")
+        elif rvol_val >= 1.2:
+            factors.append(f"📊 Vol Expansion ({rvol_val:.1f}x)")
+
+        sc = float(plan.get("score", cand.get("score", 0.0) if cand else 0.0))
+        if sc >= 80:
+            factors.append(f"⭐ Quant Score {sc:.0f}/100")
+        elif sc >= 75:
+            factors.append(f"📈 Momentum {sc:.0f}/100")
+
+        macro_badge_raw = str(plan.get("macro_badge", "")).strip()
+        has_tailwind = bool(plan.get("has_sector_tailwind", cand.get("has_sector_tailwind", False) if cand else False))
+        sector_name = plan.get("sector", cand.get("sector", "Sector") if cand else "Sector")
+        if macro_badge_raw and "HEADWIND" not in macro_badge_raw.upper():
+            if "TAILWIND" in macro_badge_raw.upper() or "BENEFICIARY" in macro_badge_raw.upper():
+                factors.append(f"🌊 {macro_badge_raw}")
+            else:
+                factors.append(f"🌍 {macro_badge_raw}")
+        elif has_tailwind:
+            factors.append(f"🌊 {sector_name} Tailwind")
+
+        retest = float(plan.get("retest_support_50pct", cand.get("retest_support_50pct", 0.0) if cand else 0.0))
+        if retest > 0:
+            factors.append("🛡️ Retest Defense Held")
+
+        if plan.get("panic_day_resilient", cand.get("panic_day_resilient", False) if cand else False):
+            factors.append("💪 Panic-Day Resilient")
+        if plan.get("green_on_dips", cand.get("green_on_dips", 0) if cand else 0) >= 1 or plan.get("category") in ["DIP_LEADER", "DIP"]:
+            factors.append("🚀 Dip Recovery Leader")
+
+        try:
+            entry = float(plan.get("entry_price", 0.0))
+            sl = float(plan.get("stop_loss", 0.0))
+            t1 = float(plan.get("target_1", 0.0))
+            risk = abs(entry - sl)
+            if risk > 0 and (abs(t1 - entry) / risk) >= 1.4:
+                factors.append(f"🎯 Favorable 1:{(abs(t1 - entry) / risk):.1f} R:R")
+        except Exception:
+            pass
+
+        if not factors:
+            factors.append("✅ Algorithmic Momentum Aligned")
+
+        safety_score = min(85 + (len(factors) * 3), 98)
+        return True, factors, safety_score

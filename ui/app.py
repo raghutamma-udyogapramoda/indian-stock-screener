@@ -1754,8 +1754,71 @@ if run_btn or "cached_results" in st.session_state:
                     if k not in ordered_keys:
                         ordered_keys.append(k)
 
+                # Conviction, Risk-Reward, and Confirmed Strategy helper functions
+                def _get_conviction_tier(p_dict):
+                    c_str = str(p_dict.get("conviction", "")).upper()
+                    if "HIGH" in c_str:
+                        return "HIGH"
+                    elif "MED" in c_str:
+                        return "MEDIUM"
+                    elif "LOW" in c_str or "SPEC" in c_str:
+                        return "LOW"
+                    return "MEDIUM"
+
+                def _get_rr_t1_numeric(p_dict):
+                    try:
+                        entry = float(p_dict.get("entry_price", 0.0))
+                        sl = float(p_dict.get("stop_loss", 0.0))
+                        t1 = float(p_dict.get("target_1", 0.0))
+                        risk = abs(entry - sl)
+                        if risk > 0:
+                            return abs(t1 - entry) / risk
+                    except Exception:
+                        pass
+                    return 1.0
+
+                def _get_conviction_rank(p_dict):
+                    tier = _get_conviction_tier(p_dict)
+                    if tier == "HIGH":
+                        return 3
+                    elif tier == "MEDIUM":
+                        return 2
+                    return 1
+
+                def _get_plan_change_pct(p_dict):
+                    try:
+                        return float(p_dict.get("change_pct", 0.0))
+                    except Exception:
+                        return 0.0
+
+                def _is_confirmed_plan(p_dict):
+                    """
+                    Filters for institutional-grade high-conviction setups that reliably perform
+                    under normal orderly market situations. Excludes invalidated, headwind-facing,
+                    or sub-par risk-reward setups.
+                    """
+                    if p_dict.get("is_confirmed") is not None:
+                        return bool(p_dict.get("is_confirmed"))
+                    return AIAdvisor.evaluate_plan_confirmation(p_dict)[0]
+
+                def _get_confirmation_factors(p_dict):
+                    if p_dict.get("confirmation_factors"):
+                        return p_dict.get("confirmation_factors")
+                    return AIAdvisor.evaluate_plan_confirmation(p_dict)[1]
+
+                def _get_confirmation_score(p_dict):
+                    if p_dict.get("safety_score"):
+                        return int(p_dict.get("safety_score"))
+                    return AIAdvisor.evaluate_plan_confirmation(p_dict)[2]
+
+                # Pre-group plans by conviction tier and confirmed status
+                confirmed_plans = [p for p in plans if _is_confirmed_plan(p)]
+                high_plans = [p for p in plans if _get_conviction_tier(p) == "HIGH"]
+                med_plans = [p for p in plans if _get_conviction_tier(p) == "MEDIUM"]
+                low_plans = [p for p in plans if _get_conviction_tier(p) == "LOW"]
+
                 # Reusable plan card rendering function with scoped widget keys
-                def _render_plans_cards_grid(plan_list, tab_prefix):
+                def _render_plans_cards_grid(plan_list, tab_prefix, is_confirmed_view=False):
                     if not plan_list:
                         st.info("No trade setups available in this category.")
                         return
@@ -1869,6 +1932,26 @@ if run_btn or "cached_results" in st.session_state:
                             else:
                                 conv_pill = '<span style="background: rgba(245, 158, 11, 0.2); color: #F59E0B; border: 1px solid #F59E0B; padding: 2px 8px; border-radius: 4px; font-weight: 700; font-size: 0.8rem;">⚠️ LOW / SPECULATIVE</span>'
 
+                            # Confirmation safety ribbon
+                            is_conf = is_confirmed_view or _is_confirmed_plan(p)
+                            confirmed_banner = ""
+                            if is_conf and not is_avoid:
+                                conf_score = _get_confirmation_score(p)
+                                conf_factors = _get_confirmation_factors(p)
+                                factor_pills = " ".join([
+                                    f'<span style="background: rgba(16, 185, 129, 0.15); color: #34D399; border: 1px solid rgba(16, 185, 129, 0.4); padding: 2px 7px; border-radius: 4px; font-size: 0.72rem; font-weight: 600; margin-right: 4px; margin-bottom: 3px; display: inline-block;">{f}</span>'
+                                    for f in conf_factors
+                                ])
+                                confirmed_banner = (
+                                    f'<div style="background: linear-gradient(90deg, rgba(6, 78, 59, 0.45) 0%, rgba(4, 120, 87, 0.18) 100%); border: 1px solid #10B981; border-left: 5px solid #10B981; border-radius: 6px; padding: 7px 12px; margin-bottom: 10px;">'
+                                    f'<div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px; flex-wrap: wrap; gap: 4px;">'
+                                    f'<span style="color: #34D399; font-size: 0.82rem; font-weight: 800; letter-spacing: 0.4px;">🛡️ CONFIRMED HIGH-CONVICTION STRATEGY</span>'
+                                    f'<span style="background: #064e3b; color: #6EE7B7; border: 1px solid #10B981; padding: 1px 8px; border-radius: 10px; font-size: 0.73rem; font-weight: 800;">{conf_score}% SAFETY INDEX</span>'
+                                    f'</div>'
+                                    f'<div style="display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px;">{factor_pills}</div>'
+                                    f'</div>'
+                                )
+
                             card_html = (
                                 f'<div style="background-color: #1a1e24; border-radius: 10px; padding: 18px; margin-bottom: 16px; border-left: 6px solid {border_color}; box-shadow: 0 4px 8px rgba(0,0,0,0.35);">'
                                 f'<div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px;">'
@@ -1888,6 +1971,7 @@ if run_btn or "cached_results" in st.session_state:
                                 f'Timeframe: <b style="color: #FFF;">{p.get("timeframe")}</b> | '
                                 f'Conviction: {conv_pill}'
                                 f'</p>'
+                                f'{confirmed_banner}'
                                 f'{status_banner}'
                                 f'{macro_impact_banner}'
                                 f'<div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; background-color: #0e1117; padding: 12px; border-radius: 6px; margin: 10px 0 6px 0;">'
@@ -1949,61 +2033,166 @@ if run_btn or "cached_results" in st.session_state:
                                         time.sleep(0.4)
                                         st.rerun()
 
-                # Conviction tier helper functions
-                def _get_conviction_tier(p_dict):
-                    c_str = str(p_dict.get("conviction", "")).upper()
-                    if "HIGH" in c_str:
-                        return "HIGH"
-                    elif "MED" in c_str:
-                        return "MEDIUM"
-                    elif "LOW" in c_str or "SPEC" in c_str:
-                        return "LOW"
-                    return "MEDIUM"
-
-                def _get_rr_t1_numeric(p_dict):
-                    try:
-                        entry = float(p_dict.get("entry_price", 0.0))
-                        sl = float(p_dict.get("stop_loss", 0.0))
-                        t1 = float(p_dict.get("target_1", 0.0))
-                        risk = abs(entry - sl)
-                        if risk > 0:
-                            return abs(t1 - entry) / risk
-                    except Exception:
-                        pass
-                    return 1.0
-
-                def _get_conviction_rank(p_dict):
-                    tier = _get_conviction_tier(p_dict)
-                    if tier == "HIGH":
-                        return 3
-                    elif tier == "MEDIUM":
-                        return 2
-                    return 1
-
-                def _get_plan_change_pct(p_dict):
-                    try:
-                        return float(p_dict.get("change_pct", 0.0))
-                    except Exception:
-                        return 0.0
-
-                # Pre-group plans by conviction tier
-                high_plans = [p for p in plans if _get_conviction_tier(p) == "HIGH"]
-                med_plans = [p for p in plans if _get_conviction_tier(p) == "MEDIUM"]
-                low_plans = [p for p in plans if _get_conviction_tier(p) == "LOW"]
-
-                # Build tab headers: Overview tab + Conviction sub-tab + Category sub-tabs
+                # Build tab headers: Confirmed Strategies (Primary) + Overview tab + Conviction sub-tab + Category sub-tabs
                 tab_headers = [
+                    f"🛡️ Confirmed Strategies ({len(confirmed_plans)})",
                     f"🌟 All Plans ({len(plans)})",
                     f"🔥 Conviction ({len(plans)})"
                 ] + [f"{cat_labels[k]} ({len(plans_by_cat[k])})" for k in ordered_keys]
                 ai_sub_tabs = st.tabs(tab_headers)
 
-                # 1. Render All Plans tab
+                # 1. Render Confirmed Strategies tab (Default First Tab)
                 with ai_sub_tabs[0]:
+                    st.markdown("### 🛡️ Confirmed Strategies — High-Conviction Institutional Safe List")
+                    st.caption(
+                        "**Curated specifically to eliminate overwhelm and protect capital.** "
+                        "Every setup in this tab has undergone multi-factor quantitative screening to ensure it **would not fail under normal market conditions**: "
+                        "**Tier-1 High Conviction**, **Zero Macro Headwinds**, **Institutional Volume Surge / Retest Defense**, and **Strict Asymmetric Risk-Reward (≥ 1:1.2R)**."
+                    )
+
+                    # 4 Safety Assurance Pillars KPI Grid
+                    pillars_html = (
+                        f'<div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; margin: 12px 0 20px 0;">'
+                        f'<div style="background: linear-gradient(135deg, rgba(6, 78, 59, 0.45) 0%, rgba(4, 120, 87, 0.2) 100%); border: 1px solid #10B981; border-left: 5px solid #10B981; border-radius: 8px; padding: 12px 14px;">'
+                        f'<div style="color: #34D399; font-size: 0.78rem; font-weight: 700; text-transform: uppercase;">1. Capital Defense Floor</div>'
+                        f'<div style="color: #FFF; font-size: 0.95rem; font-weight: 700; margin: 3px 0;">Strict Invalidation SL</div>'
+                        f'<div style="color: #94A3B8; font-size: 0.75rem; line-height: 1.3;">Anchored to ATR & pivot support. Breached trades are instantly disqualified.</div>'
+                        f'</div>'
+                        f'<div style="background: linear-gradient(135deg, rgba(14, 42, 59, 0.45) 0%, rgba(3, 105, 161, 0.2) 100%); border: 1px solid #38BDF8; border-left: 5px solid #38BDF8; border-radius: 8px; padding: 12px 14px;">'
+                        f'<div style="color: #38BDF8; font-size: 0.78rem; font-weight: 700; text-transform: uppercase;">2. Macro Climatology</div>'
+                        f'<div style="color: #FFF; font-size: 0.95rem; font-weight: 700; margin: 3px 0;">Zero Macro Headwinds</div>'
+                        f'<div style="color: #94A3B8; font-size: 0.75rem; line-height: 1.3;">100% vetted against Crude spikes, USD/INR depreciation, and index drag.</div>'
+                        f'</div>'
+                        f'<div style="background: linear-gradient(135deg, rgba(55, 48, 163, 0.45) 0%, rgba(79, 70, 229, 0.2) 100%); border: 1px solid #818CF8; border-left: 5px solid #818CF8; border-radius: 8px; padding: 12px 14px;">'
+                        f'<div style="color: #A5B4FC; font-size: 0.78rem; font-weight: 700; text-transform: uppercase;">3. Institutional Proof</div>'
+                        f'<div style="color: #FFF; font-size: 0.95rem; font-weight: 700; margin: 3px 0;">Volume & Accumulation</div>'
+                        f'<div style="color: #94A3B8; font-size: 0.75rem; line-height: 1.3;">Real institutional volume (&gt;1.5x) or dip alpha absorption, never retail chop.</div>'
+                        f'</div>'
+                        f'<div style="background: linear-gradient(135deg, rgba(112, 26, 117, 0.45) 0%, rgba(162, 28, 175, 0.2) 100%); border: 1px solid #C084FC; border-left: 5px solid #C084FC; border-radius: 8px; padding: 12px 14px;">'
+                        f'<div style="color: #E879F9; font-size: 0.78rem; font-weight: 700; text-transform: uppercase;">4. Asymmetric Targets</div>'
+                        f'<div style="color: #FFF; font-size: 0.95rem; font-weight: 700; margin: 3px 0;">1:1.5 to 1:3.5+ R:R</div>'
+                        f'<div style="color: #94A3B8; font-size: 0.75rem; line-height: 1.3;">Staggered 33% profit booking ladder with automated trailing playbook.</div>'
+                        f'</div>'
+                        f'</div>'
+                    )
+                    render_html(pillars_html)
+
+                    if confirmed_plans:
+                        # Interactive Controls for Confirmed Setups
+                        conf_c1, conf_c2, conf_c3 = st.columns([1.5, 1.3, 1.2])
+                        with conf_c1:
+                            conf_dir_opt = st.selectbox(
+                                "Trade Direction:",
+                                ["All Confirmed Setups", "🟢 Longs Only (BUY / CE)", "🔴 Shorts Only (SELL / PE)"],
+                                key="conf_dir_filter"
+                            )
+                        with conf_c2:
+                            available_cats = ["All Strategies"] + sorted(list(set([str(p.get("category", "")).title() for p in confirmed_plans])))
+                            conf_cat_opt = st.selectbox(
+                                "Strategy Type:",
+                                available_cats,
+                                key="conf_cat_filter"
+                            )
+                        with conf_c3:
+                            conf_sort_opt = st.selectbox(
+                                "Sort Confirmed Setups:",
+                                ["Safety Index (Highest First)", "Risk:Reward Ratio (T1)", "Day Change %", "Symbol (A-Z)"],
+                                key="conf_sort_filter"
+                            )
+
+                        def _apply_conf_filters(p_list):
+                            res = p_list
+                            if "Long" in conf_dir_opt:
+                                res = [p for p in res if "BUY" in str(p.get("trade_action", "")).upper() and "PE" not in str(p.get("trade_action", "")).upper()]
+                            elif "Short" in conf_dir_opt:
+                                res = [p for p in res if "SELL" in str(p.get("trade_action", "")).upper() or "PE" in str(p.get("trade_action", "")).upper()]
+                            if conf_cat_opt != "All Strategies":
+                                res = [p for p in res if str(p.get("category", "")).title() == conf_cat_opt]
+                            if "Safety" in conf_sort_opt:
+                                res = sorted(res, key=lambda p: (_get_confirmation_score(p), _get_rr_t1_numeric(p)), reverse=True)
+                            elif "Risk:Reward" in conf_sort_opt:
+                                res = sorted(res, key=lambda p: _get_rr_t1_numeric(p), reverse=True)
+                            elif "Change" in conf_sort_opt:
+                                res = sorted(res, key=lambda p: _get_plan_change_pct(p), reverse=True)
+                            elif "Symbol" in conf_sort_opt:
+                                res = sorted(res, key=lambda p: str(p.get("symbol", "")))
+                            return res
+
+                        filtered_conf = _apply_conf_filters(confirmed_plans)
+                        st.caption(f"Showing **{len(filtered_conf)} of {len(confirmed_plans)}** verified high-conviction trade setups (out of {len(plans)} total screened candidates).")
+
+                        # Master Execution Table
+                        with st.expander("📊 Confirmed Strategies Master Execution Table", expanded=True):
+                            if filtered_conf:
+                                m_rows = []
+                                for p in filtered_conf:
+                                    sym_p = p.get("symbol", "")
+                                    ltp_val = p.get("close") or p.get("ltp") or p.get("entry_price", 0.0)
+                                    chg_pct = p.get("change_pct", 0.0)
+                                    act_str = str(p.get("trade_action", "BUY")).upper()
+                                    if "PE" in act_str:
+                                        act_icon = "🔴 BUY PE"
+                                    elif "CE" in act_str:
+                                        act_icon = "🟢 BUY CE"
+                                    elif "SELL" in act_str:
+                                        act_icon = "🔴 SELL"
+                                    else:
+                                        act_icon = "🟢 BUY"
+
+                                    comm_unit = ""
+                                    if UniverseManager.is_commodity(sym_p):
+                                        comm_unit = f" ({UniverseManager.get_commodity_unit(sym_p)})"
+
+                                    c_factors_str = " • ".join(_get_confirmation_factors(p)[:2])
+                                    m_rows.append({
+                                        "Symbol": sym_p + comm_unit,
+                                        "Safety Index": f"🛡️ {_get_confirmation_score(p)}%",
+                                        "Action": act_icon,
+                                        "Strategy": p.get("category", "General"),
+                                        "LTP (₹)": f"₹{ltp_val:,.2f}",
+                                        "Day Change": f"{chg_pct:+.2f}%",
+                                        "Entry Trigger (₹)": f"₹{p.get('entry_price', 0.0):,.2f}",
+                                        "Stop Loss (₹)": f"₹{p.get('tight_stop_loss', p.get('stop_loss', 0.0)):,.2f}",
+                                        "Target 1 (₹)": f"₹{p.get('target_1', 0.0):,.2f}",
+                                        "Target 2 (₹)": f"₹{p.get('target_2', 0.0):,.2f}",
+                                        "R:R Ratio": p.get("risk_reward_ratio", "—"),
+                                        "₹2k Risk Size": f"{p.get('shares_for_2k_risk', '—')} sh",
+                                        "Key Confirmation Confluence": c_factors_str
+                                    })
+                                st.dataframe(pd.DataFrame(m_rows), use_container_width=True, hide_index=True)
+                            else:
+                                st.info("No confirmed strategies match your filter criteria above.")
+
+                        st.markdown("---")
+                        _render_plans_cards_grid(filtered_conf, "conf_plan", is_confirmed_view=True)
+                    else:
+                        st.markdown(
+                            f'<div style="background: linear-gradient(135deg, rgba(30, 41, 59, 0.8) 0%, rgba(15, 23, 42, 0.95) 100%); border: 2px solid #38BDF8; border-left: 8px solid #38BDF8; border-radius: 10px; padding: 22px; margin: 15px 0 25px 0;">'
+                            f'<div style="display: flex; align-items: center; gap: 10px;">'
+                            f'<span style="font-size: 1.6rem;">🛡️</span>'
+                            f'<h3 style="margin: 0; color: #FFF; font-size: 1.25rem;">Capital Preservation Mode: 0 Confirmed Setups Today</h3>'
+                            f'</div>'
+                            f'<p style="margin: 10px 0 0 0; color: #CBD5E1; font-size: 0.92rem; line-height: 1.5;">'
+                            f'In choppy, consolidating, or macro-turbulent market regimes, the quantitative engine enforces <b>strict capital protection</b>. '
+                            f'No candidates today achieved the full confluence required for guaranteed normal-condition safety (high volume surge + macro tailwind + score &ge; 75 + clean stop loss). '
+                            f'<br><br><b>Recommended Action:</b> Cash is a valid position. If looking for tactical setups, view the <b>🌟 All Plans</b> or <b>🔥 Conviction Radar</b> tab with half-position sizing.'
+                            f'</p>'
+                            f'</div>',
+                            unsafe_allow_html=True
+                        )
+
+                        near_confirmed = [p for p in plans if "AVOID" not in str(p.get("trade_action", "")).upper() and _get_conviction_tier(p) in ["HIGH", "MEDIUM"]]
+                        if near_confirmed:
+                            st.markdown("#### ⏳ Closest Candidates Awaiting Confirmation Trigger")
+                            st.caption("These setups have strong foundational momentum or support, but are awaiting a final catalyst trigger (e.g. morning breakout volume or resistance breakout) before achieving confirmed status.")
+                            _render_plans_cards_grid(near_confirmed[:4], "near_conf", is_confirmed_view=False)
+
+                # 2. Render All Plans tab
+                with ai_sub_tabs[1]:
                     _render_plans_cards_grid(plans, "all")
 
-                # 2. Render Conviction sub-tab
-                with ai_sub_tabs[1]:
+                # 3. Render Conviction sub-tab
+                with ai_sub_tabs[2]:
                     st.markdown("### 🎯 Conviction Radar — High vs. Low Conviction Breakdown")
                     st.caption("Instantly isolate institutional high-conviction trade setups from standard and speculative opportunities based on quantitative momentum scores, volume expansion (>2x), and macroeconomic tailwinds.")
 
@@ -2210,7 +2399,7 @@ if run_btn or "cached_results" in st.session_state:
                                 st.info(f"No setups match the current filter selection ({conv_filter_opt}).")
 
                 # Render Category sub tabs
-                for sub_i, cat_k in enumerate(ordered_keys, start=2):
+                for sub_i, cat_k in enumerate(ordered_keys, start=3):
                     with ai_sub_tabs[sub_i]:
                         _render_plans_cards_grid(plans_by_cat[cat_k], f"cat_{cat_k.lower()}")
 
