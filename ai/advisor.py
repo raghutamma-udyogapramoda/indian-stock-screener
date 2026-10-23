@@ -564,10 +564,15 @@ class AIAdvisor:
         plan["capital_for_2k_risk"] = round(plan["shares_for_2k_risk"] * entry, 2)
 
         # Automatic institutional confirmation tagging
-        is_conf, conf_factors, conf_score = AIAdvisor.evaluate_plan_confirmation(plan, cand)
-        plan["is_confirmed"] = is_conf
-        plan["confirmation_factors"] = conf_factors
-        plan["safety_score"] = conf_score
+        try:
+            is_conf, conf_factors, conf_score = AIAdvisor.evaluate_plan_confirmation(plan, cand)
+            plan["is_confirmed"] = is_conf
+            plan["confirmation_factors"] = conf_factors
+            plan["safety_score"] = conf_score
+        except Exception:
+            plan["is_confirmed"] = False
+            plan["confirmation_factors"] = []
+            plan["safety_score"] = 0
         return plan
 
     @staticmethod
@@ -663,3 +668,8 @@ class AIAdvisor:
 
         safety_score = min(85 + (len(factors) * 3), 98)
         return True, factors, safety_score
+
+
+# Module-level alias for backward/forward compatibility across hot-reloads
+evaluate_plan_confirmation = AIAdvisor.evaluate_plan_confirmation
+

@@ -1796,20 +1796,89 @@ if run_btn or "cached_results" in st.session_state:
                     Filters for institutional-grade high-conviction setups that reliably perform
                     under normal orderly market situations. Excludes invalidated, headwind-facing,
                     or sub-par risk-reward setups.
+                    Guaranteed resilient against module cache or hot-reload states.
                     """
                     if p_dict.get("is_confirmed") is not None:
                         return bool(p_dict.get("is_confirmed"))
-                    return AIAdvisor.evaluate_plan_confirmation(p_dict)[0]
+
+                    action = str(p_dict.get("trade_action", "")).upper()
+                    if "AVOID" in action:
+                        return False
+
+                    tier = _get_conviction_tier(p_dict)
+                    if tier != "HIGH":
+                        return False
+
+                    macro_b = str(p_dict.get("macro_badge", "")).upper()
+                    if "HEADWIND" in macro_b or "BEARISH DRAG" in macro_b:
+                        return False
+
+                    try:
+                        entry = float(p_dict.get("entry_price", 0.0))
+                        sl = float(p_dict.get("tight_stop_loss", p_dict.get("stop_loss", 0.0)))
+                        cmp = float(p_dict.get("close", entry))
+                        is_bullish = ("BUY" in action or action == "LONG") and "PE" not in action
+                        if is_bullish and cmp <= sl and cmp > 0 and sl > 0:
+                            return False
+                        if not is_bullish and cmp >= sl and cmp > 0 and sl > 0:
+                            return False
+                    except Exception:
+                        pass
+
+                    if _get_rr_t1_numeric(p_dict) < 1.0:
+                        return False
+
+                    return True
 
                 def _get_confirmation_factors(p_dict):
                     if p_dict.get("confirmation_factors"):
                         return p_dict.get("confirmation_factors")
-                    return AIAdvisor.evaluate_plan_confirmation(p_dict)[1]
+
+                    factors = []
+                    rvol_val = float(p_dict.get("rvol_9", p_dict.get("rvol", 1.0)))
+                    if p_dict.get("vol_confirmed_2x") or rvol_val >= 1.5:
+                        factors.append(f"🔥 Vol Surge ({rvol_val:.1f}x)")
+                    elif rvol_val >= 1.2:
+                        factors.append(f"📊 Vol Expansion ({rvol_val:.1f}x)")
+
+                    sc = float(p_dict.get("score", 0.0))
+                    if sc >= 80:
+                        factors.append(f"⭐ Quant Score {sc:.0f}/100")
+                    elif sc >= 75:
+                        factors.append(f"📈 Momentum {sc:.0f}/100")
+
+                    macro_b = str(p_dict.get("macro_badge", "")).strip()
+                    if macro_b and "HEADWIND" not in macro_b.upper():
+                        if "TAILWIND" in macro_b.upper() or "BENEFICIARY" in macro_b.upper():
+                            factors.append(f"🌊 {macro_b}")
+                        else:
+                            factors.append(f"🌍 {macro_b}")
+                    elif p_dict.get("has_sector_tailwind"):
+                        factors.append(f"🌊 {p_dict.get('sector', 'Sector')} Tailwind")
+
+                    retest = float(p_dict.get("retest_support_50pct", 0.0))
+                    if retest > 0:
+                        factors.append("🛡️ Retest Defense Held")
+
+                    if p_dict.get("panic_day_resilient"):
+                        factors.append("💪 Panic-Day Resilient")
+                    if p_dict.get("green_on_dips", 0) >= 1 or p_dict.get("category") in ["DIP_LEADER", "DIP"]:
+                        factors.append("🚀 Dip Recovery Leader")
+
+                    rr_num = _get_rr_t1_numeric(p_dict)
+                    if rr_num >= 1.4:
+                        factors.append(f"🎯 Favorable 1:{rr_num:.1f} R:R")
+
+                    if not factors:
+                        factors.append("✅ Algorithmic Momentum Aligned")
+
+                    return factors
 
                 def _get_confirmation_score(p_dict):
                     if p_dict.get("safety_score"):
                         return int(p_dict.get("safety_score"))
-                    return AIAdvisor.evaluate_plan_confirmation(p_dict)[2]
+                    factors = _get_confirmation_factors(p_dict)
+                    return min(85 + (len(factors) * 3), 98)
 
                 # Pre-group plans by conviction tier and confirmed status
                 confirmed_plans = [p for p in plans if _is_confirmed_plan(p)]
