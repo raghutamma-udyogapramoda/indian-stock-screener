@@ -144,6 +144,7 @@ class BacktestRunner:
         """Persists run metadata and performance summary."""
         try:
             run_id = f"RUN_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{result.symbol}_{result.strategy_name.replace(' ', '_')[:10]}"
+            result.run_id = run_id
             filepath = cls.STORAGE_DIR / f"{run_id}.json"
 
             payload = {

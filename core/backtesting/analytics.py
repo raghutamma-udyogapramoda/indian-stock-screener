@@ -67,6 +67,7 @@ class BacktestResult:
     monthly_returns: pd.DataFrame = field(default_factory=pd.DataFrame)
     data_quality_report: Dict[str, Any] = field(default_factory=dict)
     warnings: List[str] = field(default_factory=list)
+    run_id: str = ""
 
     def to_summary_dict(self) -> Dict[str, Any]:
         """Provides an executive summary dictionary for UI and persistence."""

@@ -92,10 +92,13 @@ class IndianCostModel:
         # 1. Slippage cost (Execution drag vs theoretical price)
         slippage = turnover * slip_pct
 
-        # 2. Brokerage (e.g., Discount broker: min(0.03% turnover, ₹20))
-        brokerage = min(self.brokerage_per_order, turnover * self.brokerage_pct_cap)
-        if segment_up == "EQUITY_DELIVERY":
-            brokerage = 0.0  # Many top Indian brokers have zero delivery brokerage
+        # 2. Brokerage (Options: flat ₹20/order; Equity Delivery: ₹0; Futures & Intraday: min(0.03%, ₹20))
+        if segment_up == "OPTIONS":
+            brokerage = self.brokerage_per_order
+        elif segment_up == "EQUITY_DELIVERY":
+            brokerage = 0.0
+        else:
+            brokerage = min(self.brokerage_per_order, turnover * self.brokerage_pct_cap)
 
         if not self.enable_statutory:
             total_cost = brokerage + slippage
