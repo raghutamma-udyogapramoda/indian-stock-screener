@@ -49,7 +49,7 @@ except Exception:
 
 # Guard against Streamlit Cloud stale in-memory module caching across git updates
 import importlib
-_APP_BUILD_SIG = "2026_10_16_tracker_fix_v3"
+_APP_BUILD_SIG = "2026_10_24_fno_section_v1"
 if sys.modules.get("__CURRENT_BUILD_SIG__") != _APP_BUILD_SIG:
     for mod_name in list(sys.modules.keys()):
         if any(mod_name == pkg or mod_name.startswith(pkg + ".") for pkg in ("core", "screeners", "ai", "providers")):
@@ -65,6 +65,7 @@ try:
     import core.stock_levels
     import core.indicators
     import core.tracker
+    import core.fno_tracker
     import screeners.dip_leaders
     import screeners.breakout
     import screeners.breakdown
@@ -79,6 +80,7 @@ try:
     importlib.reload(core.stock_levels)
     importlib.reload(core.indicators)
     importlib.reload(core.tracker)
+    importlib.reload(core.fno_tracker)
     importlib.reload(screeners.dip_leaders)
     importlib.reload(screeners.breakout)
     importlib.reload(screeners.breakdown)
@@ -90,6 +92,7 @@ except Exception:
     pass
 
 from ai.advisor import AIAdvisor
+from core.fno_tracker import FNOTracker
 from core.indices import IndexDerivativesAnalyzer, INDEX_SPECS
 from core.macro import MacroMarketEngine
 from core.tracker import PortfolioTracker
@@ -354,6 +357,347 @@ def render_live_tracked_positions_fragment(target_user: str, data_dict: Dict[str
                     st.toast(f"Removed {item['symbol']} from {target_user.upper()}'s tracker.", icon="🗑️")
                     time.sleep(0.3)
                     st.rerun()
+
+
+def render_fno_section_view(current_user: str, data_dict: Dict[str, pd.DataFrame]):
+    """Renders the dedicated Live F&O (Futures & Options) Tracking & Open Interest Intelligence section."""
+    target_user = current_user
+    if is_admin(current_user):
+        admin_user_options = ["guruteja", "raghavendra", "naresh", "admin", "trader"]
+        if current_user.lower() not in admin_user_options:
+            admin_user_options.insert(0, current_user.lower())
+        curr_idx = admin_user_options.index(current_user.lower()) if current_user.lower() in admin_user_options else 0
+        
+        adm_box_c1, adm_box_c2 = st.columns([2.5, 1.5])
+        with adm_box_c1:
+            st.markdown(
+                '<div style="background: rgba(255, 215, 0, 0.08); border-left: 4px solid #FFD700; border-radius: 6px; padding: 8px 12px; margin-bottom: 12px; font-size: 0.85rem; color: #FFF8E1;">'
+                '<b>👑 Administrator F&O Portfolio Management:</b> You have full admin access. Select any user below to inspect or manage their live F&O tracking portfolio.'
+                '</div>',
+                unsafe_allow_html=True
+            )
+        with adm_box_c2:
+            target_user = st.selectbox(
+                "Select F&O Portfolio to View/Manage",
+                admin_user_options,
+                index=curr_idx,
+                format_func=lambda u: f"👑 {u.upper()} (Admin)" if is_admin(u) else f"👤 {u.upper()} (Trader)",
+                key=f"admin_fno_portfolio_selector_{current_user}"
+            )
+
+    fno_positions = FNOTracker.load_positions(target_user)
+
+    # Header Row
+    h_col1, h_col2, h_col3 = st.columns([2.8, 1.1, 1.1])
+    with h_col1:
+        admin_tag = " <span style='color: #FFD700; font-size: 0.85rem; border: 1px solid #FFD700; padding: 2px 8px; border-radius: 12px;'>👑 ADMIN</span>" if is_admin(target_user) else ""
+        st.markdown(f"<h3 style='margin-bottom: 2px;'>⚡ {target_user.upper()}'s Live F&O Section & Derivative Surveillance Matrix{admin_tag}</h3>", unsafe_allow_html=True)
+        st.caption("Official National Stock Exchange (NSE) Derivatives Feed. Real-time Spot CMP, Futures Basis (Premium/Discount), Open Interest (OI) Buildup, Put-Call Ratio (PCR), and Institutional Strike Walls.")
+    with h_col2:
+        if st.button("🔄 Live NSE Refresh", key=f"fno_refresh_btn_{target_user}", help="Pulls latest real-time futures & options quotes directly from NSE", use_container_width=True):
+            from core.fno_tracker import _FNO_QUOTE_CACHE
+            _FNO_QUOTE_CACHE.clear()
+            st.toast("✅ Cleared cache. Pulling fresh live F&O quotes from NSE...", icon="📡")
+            time.sleep(0.3)
+            st.rerun()
+    with h_col3:
+        if fno_positions:
+            if st.button("🧹 Clear All F&O", type="secondary", use_container_width=True, key=f"clear_all_fno_{target_user}", help="Remove all tracked F&O contracts"):
+                FNOTracker.clear_all_positions(target_user)
+                st.toast(f"✅ Cleared all tracked F&O items for {target_user.upper()}.", icon="🧹")
+                time.sleep(0.3)
+                st.rerun()
+
+    # Add Stock Form to F&O
+    all_fno_stocks = FNOTracker.get_all_searchable_fno_symbols()
+    with st.expander("➕ Add Underlying / Derivative Contract to F&O Section", expanded=False):
+        with st.form(f"manual_fno_add_form_{target_user}", clear_on_submit=True):
+            fno_add_c1, fno_add_c2, fno_add_c3 = st.columns([2, 1.5, 1.5])
+            with fno_add_c1:
+                sel_fno_sym = st.selectbox(
+                    "F&O Symbol / Underlying",
+                    options=all_fno_stocks,
+                    index=all_fno_stocks.index("RELIANCE") if "RELIANCE" in all_fno_stocks else 0,
+                    key=f"manual_fno_sym_{target_user}",
+                    help="Select from 180+ liquid F&O stocks and major indices"
+                )
+            with fno_add_c2:
+                sel_fno_inst = st.selectbox(
+                    "Instrument Type",
+                    ["FUTURES", "OPTION_CE", "OPTION_PE"],
+                    index=0,
+                    key=f"manual_fno_inst_{target_user}"
+                )
+            with fno_add_c3:
+                sel_fno_strike = st.number_input(
+                    "Strike Price (₹)",
+                    value=0.0,
+                    help="For Options only. Leave 0.0 to auto-select At-The-Money (ATM).",
+                    key=f"manual_fno_strike_{target_user}"
+                )
+
+            fno_add_c4, fno_add_c5, fno_add_c6 = st.columns(3)
+            with fno_add_c4:
+                sel_fno_lots = st.number_input(
+                    "Number of Lots",
+                    min_value=1,
+                    value=1,
+                    step=1,
+                    key=f"manual_fno_lots_{target_user}"
+                )
+            with fno_add_c5:
+                sel_fno_sl = st.number_input(
+                    "Stop Loss (₹)",
+                    value=0.0,
+                    help="Leave 0.0 to auto-calculate from ATR/support",
+                    key=f"manual_fno_sl_{target_user}"
+                )
+            with fno_add_c6:
+                sel_fno_tgt = st.number_input(
+                    "Target (₹)",
+                    value=0.0,
+                    help="Leave 0.0 to auto-calculate 1:2 Risk:Reward",
+                    key=f"manual_fno_tgt_{target_user}"
+                )
+
+            fno_add_notes = st.text_input("Trade Notes / Strategy Thesis", placeholder="e.g. Near-month breakout hedge / Long buildup continuation", key=f"manual_fno_notes_{target_user}")
+
+            btn_submit_fno = st.form_submit_button("➕ Track in Live F&O Section", type="primary", use_container_width=True)
+            if btn_submit_fno:
+                if sel_fno_sym:
+                    added = FNOTracker.add_position(
+                        username=target_user,
+                        symbol=sel_fno_sym,
+                        contract_type=sel_fno_inst,
+                        strike=float(sel_fno_strike),
+                        lots=int(sel_fno_lots),
+                        stop_loss=float(sel_fno_sl),
+                        target=float(sel_fno_tgt),
+                        notes=fno_add_notes
+                    )
+                    st.toast(f"✅ Added {sel_fno_sym} ({sel_fno_inst}) to F&O tracker!", icon="⚡")
+                    time.sleep(0.3)
+                    st.rerun()
+
+    # Empty State vs Populated State
+    if not fno_positions:
+        empty_html = (
+            f'<div style="background: linear-gradient(135deg, rgba(30, 41, 59, 0.7) 0%, rgba(15, 23, 42, 0.8) 100%); '
+            f'border: 1px solid rgba(56, 189, 248, 0.3); border-radius: 12px; padding: 28px; text-align: center; margin: 18px 0 24px 0;">'
+            f'<div style="font-size: 2.8rem; margin-bottom: 8px;">⚡</div>'
+            f'<div style="font-size: 1.3rem; font-weight: 800; color: #FFF; margin-bottom: 6px;">Your F&O Surveillance Tracker is Empty</div>'
+            f'<div style="font-size: 0.92rem; color: #94A3B8; max-width: 680px; margin: 0 auto 18px auto; line-height: 1.5;">'
+            f'Add stocks directly from the <b>🤖 AI Trade Plans</b> section using the <b>⚡ Add to F&O Tracker</b> button, '
+            f'or use the quick add form above. Real-time futures price, basis, volume, open interest buildup, and PCR will automatically fetch from the NSE website.'
+            f'</div>'
+            f'</div>'
+        )
+        st.markdown(empty_html, unsafe_allow_html=True)
+
+        # 1-Click Demo Button
+        c_demo1, c_demo2, c_demo3 = st.columns([1, 2, 1])
+        with c_demo2:
+            if st.button("🚀 Load Sample F&O Underlyings (NIFTY, BANKNIFTY & RELIANCE)", type="primary", use_container_width=True, key=f"fno_demo_btn_{target_user}"):
+                FNOTracker.add_position(target_user, "NIFTY", contract_type="FUTURES", notes="Benchmark index futures tracking")
+                FNOTracker.add_position(target_user, "BANKNIFTY", contract_type="FUTURES", notes="High-beta banking index futures")
+                FNOTracker.add_position(target_user, "RELIANCE", contract_type="FUTURES", notes="Heavyweight energy & telecom leader")
+                st.toast("✅ Added sample F&O underlyings! Fetching live NSE exchange data...", icon="📡")
+                time.sleep(0.4)
+                st.rerun()
+        return
+
+    # Fetch live quotes for all unique symbols in batch
+    unique_fno_syms = list(dict.fromkeys(p["symbol"] for p in fno_positions if p.get("symbol")))
+    with st.spinner("📡 Connecting to National Stock Exchange (NSE) Derivatives Feed..."):
+        fno_quotes = FNOTracker.fetch_batch_fno_quotes(unique_fno_syms, use_cache=True)
+
+    # 1. Market Sentiment & Macro OI Bias Radar (Top KPI Cards)
+    n_long_b = sum(1 for s in unique_fno_syms if fno_quotes.get(s, {}).get("buildup") == "LONG_BUILDUP")
+    n_short_b = sum(1 for s in unique_fno_syms if fno_quotes.get(s, {}).get("buildup") == "SHORT_BUILDUP")
+    n_covering = sum(1 for s in unique_fno_syms if fno_quotes.get(s, {}).get("buildup") == "SHORT_COVERING")
+    n_unwinding = sum(1 for s in unique_fno_syms if fno_quotes.get(s, {}).get("buildup") == "LONG_UNWINDING")
+    
+    total_valid_quotes = [fno_quotes.get(s) for s in unique_fno_syms if fno_quotes.get(s)]
+    avg_pcr = round(sum(q.get("pcr", 1.0) for q in total_valid_quotes) / len(total_valid_quotes), 2) if total_valid_quotes else 1.0
+    tot_contracts_vol = sum(q.get("total_volume", 0) for q in total_valid_quotes)
+    tot_turnover_cr = sum(q.get("total_turnover_cr", 0.0) for q in total_valid_quotes)
+    
+    # Net Bias
+    bullish_forces = n_long_b + n_covering
+    bearish_forces = n_short_b + n_unwinding
+    if bullish_forces > bearish_forces:
+        net_bias_badge = f"🔥 BULLISH BIAS ({bullish_forces}/{len(unique_fno_syms)} Assets)"
+        net_bias_color = "#00E676"
+    elif bearish_forces > bullish_forces:
+        net_bias_badge = f"📉 BEARISH DRAG ({bearish_forces}/{len(unique_fno_syms)} Assets)"
+        net_bias_color = "#FF5252"
+    else:
+        net_bias_badge = "⚖️ BALANCED / NEUTRAL"
+        net_bias_color = "#FFD54F"
+
+    # KPI Row
+    k1, k2, k3, k4, k5 = st.columns(5)
+    k1.metric("Tracked F&O Underlyings", f"{len(fno_positions)} Contracts", delta=f"{len(unique_fno_syms)} Assets")
+    k2.metric("Dominant OI Buildup", net_bias_badge, delta="Smart Money Flow", delta_color="normal" if "BULLISH" in net_bias_badge else ("inverse" if "BEARISH" in net_bias_badge else "off"))
+    k3.metric("Average Put-Call Ratio (PCR)", f"{avg_pcr:.2f}", delta="Bullish (>1.0)" if avg_pcr >= 1.0 else "Bearish (<1.0)", delta_color="normal" if avg_pcr >= 1.0 else "inverse")
+    k4.metric("Day Traded Volume", f"{tot_contracts_vol:,} Ctr", delta=f"₹{tot_turnover_cr:,.0f} Cr Trn")
+    sample_ts = total_valid_quotes[0].get("timestamp", "Live") if total_valid_quotes else "Live"
+    is_live_src = total_valid_quotes and not total_valid_quotes[0].get("is_fallback")
+    k5.metric(
+        "Exchange Feed Source",
+        "🟢 NSE Direct (Live)" if is_live_src else "⚡ Backup Hybrid",
+        delta=sample_ts,
+        delta_color="normal" if is_live_src else "off"
+    )
+
+    # Buildup Distribution Badge Bar
+    st.markdown(
+        f'<div style="background: #131722; border: 1px solid #2a2e39; border-radius: 8px; padding: 10px 16px; margin: 12px 0 20px 0; font-size: 0.85rem; display: flex; flex-wrap: wrap; gap: 14px; align-items: center;">'
+        f'<b>Institutional Buildup Spectrum:</b> '
+        f'<span style="color: #00E676;">🔥 Long Buildup: <b>{n_long_b}</b></span> '
+        f'<span style="color: #38BDF8;">⚡ Short Covering: <b>{n_covering}</b></span> '
+        f'<span style="color: #FF5252;">📉 Short Buildup: <b>{n_short_b}</b></span> '
+        f'<span style="color: #F59E0B;">⚠️ Long Unwinding: <b>{n_unwinding}</b></span> '
+        f'<span style="margin-left: auto; color: #94A3B8; font-size: 0.78rem;">📡 Source: National Stock Exchange of India (NSE API)</span>'
+        f'</div>',
+        unsafe_allow_html=True
+    )
+
+    # 2. Executive F&O Surveillance Matrix Summary Table
+    st.markdown("### 📋 Executive F&O Derivatives Surveillance Matrix")
+    st.caption("Live quotes, premium/discount basis, open interest buildup interpretation, and Put-Call Ratio for all tracked items.")
+
+    matrix_rows = []
+    for p in fno_positions:
+        sym = p["symbol"]
+        q = fno_quotes.get(sym, {})
+        spot = q.get("spot_cmp", p.get("buy_price", 0.0))
+        fut = q.get("fut_price", spot)
+        basis = q.get("basis", 0.0)
+        basis_pct = q.get("basis_pct", 0.0)
+        basis_str = f"₹{basis:+.1f} ({basis_pct:+.2f}%)" if basis != 0 else "0.0"
+        chg_pct = q.get("change_pct", 0.0)
+        oi_val = q.get("near_fut_oi", 0)
+        oi_chg_pct = q.get("near_fut_oi_pchange", 0.0)
+        buildup_str = q.get("buildup_badge", "—")
+        pcr_val = q.get("pcr", 1.0)
+        res_s = q.get("resistance_strike", 0.0)
+        sup_s = q.get("support_strike", 0.0)
+        walls_str = f"R: {res_s:,.0f} | S: {sup_s:,.0f}" if (res_s > 0 or sup_s > 0) else "—"
+        vol_ctr = q.get("total_volume", 0)
+        trn_cr = q.get("total_turnover_cr", 0.0)
+        
+        # P&L calculation vs user entry
+        entry = float(p.get("buy_price", spot))
+        cur_ref = fut if p.get("contract_type") == "FUTURES" else spot
+        pnl_pct = ((cur_ref - entry) / entry * 100.0) if entry > 0 else 0.0
+        if "PE" in p.get("contract_type", ""):
+            pnl_pct = -pnl_pct  # PE gains when underlying falls
+
+        matrix_rows.append({
+            "Symbol": sym,
+            "Contract": p.get("contract_type", "FUTURES") + (f" {p.get('strike', 0):.0f}" if p.get("strike", 0) > 0 else ""),
+            "Lots": f"{p.get('lots', 1)} ({p.get('total_qty', p.get('lot_size', 250))} sh)",
+            "Spot CMP": f"₹{spot:,.2f}",
+            "Futures LTP": f"₹{fut:,.2f}",
+            "Basis (Prem/Disc)": basis_str,
+            "Day Change": f"{chg_pct:+.2f}%",
+            "Near Fut OI": f"{oi_val:,}",
+            "OI Change %": f"{oi_chg_pct:+.2f}%",
+            "Buildup": buildup_str,
+            "PCR": f"{pcr_val:.2f}",
+            "Key Walls (CE / PE)": walls_str,
+            "Volume (Ctr)": f"{vol_ctr:,}",
+            "Turnover": f"₹{trn_cr:,.1f} Cr",
+            "P&L %": f"{pnl_pct:+.2f}%",
+            "SL / Target": f"SL: ₹{p.get('stop_loss', 0):,.1f} | Tgt: ₹{p.get('target', 0):,.1f}",
+            "Source": "NSE Live" if not q.get("is_fallback") else "Backup"
+        })
+
+    if matrix_rows:
+        st.dataframe(pd.DataFrame(matrix_rows), use_container_width=True, hide_index=True)
+
+    st.markdown("---")
+
+    # 3. Rich Interactive Contract Cards
+    st.markdown("### 🎯 Detailed Contract Cards & Trade Execution Playbook")
+    for idx, p in enumerate(fno_positions):
+        sym = p["symbol"]
+        pos_id = p["id"]
+        q = fno_quotes.get(sym, {})
+        spot = q.get("spot_cmp", p.get("buy_price", 0.0))
+        fut = q.get("fut_price", spot)
+        basis = q.get("basis", 0.0)
+        basis_pct = q.get("basis_pct", 0.0)
+        basis_badge = "PREMIUM" if basis >= 0 else "DISCOUNT"
+        basis_color = "#00E676" if basis >= 0 else "#FF5252"
+        chg_pct = q.get("change_pct", 0.0)
+        chg_color = "#00E676" if chg_pct >= 0 else "#FF5252"
+        chg_arrow = "▲" if chg_pct >= 0 else "▼"
+
+        oi_val = q.get("near_fut_oi", 0)
+        oi_chg_pct = q.get("near_fut_oi_pchange", 0.0)
+        oi_chg_color = "#00E676" if oi_chg_pct >= 0 else "#FF5252"
+
+        buildup_code = q.get("buildup", "LONG_BUILDUP")
+        buildup_badge = q.get("buildup_badge", "🔥 Long Buildup")
+        buildup_color = q.get("buildup_color", "#00E676")
+        buildup_desc = q.get("buildup_desc", "Active institutional positioning")
+
+        pcr_val = q.get("pcr", 1.0)
+        pcr_sentiment = "BULLISH" if pcr_val > 1.1 else ("BEARISH" if pcr_val < 0.75 else "NEUTRAL")
+        pcr_color = "#00E676" if pcr_sentiment == "BULLISH" else ("#FF5252" if pcr_sentiment == "BEARISH" else "#FFD54F")
+
+        entry = float(p.get("buy_price", spot))
+        cur_ref = fut if p.get("contract_type") == "FUTURES" else spot
+        pnl_pct = ((cur_ref - entry) / entry * 100.0) if entry > 0 else 0.0
+        if "PE" in p.get("contract_type", ""):
+            pnl_pct = -pnl_pct
+        pnl_color = "#00E676" if pnl_pct >= 0 else "#FF5252"
+        pnl_bg = "rgba(0, 230, 118, 0.15)" if pnl_pct >= 0 else "rgba(255, 82, 82, 0.15)"
+
+        src_lbl = "📡 NSE OFFICIAL LIVE" if not q.get("is_fallback") else "⚡ BACKUP HYBRID"
+
+        card_html = (
+            f'<div style="background-color: #131722; border-left: 6px solid {buildup_color}; border-radius: 10px; '
+            f'padding: 18px; margin-bottom: 14px; border-top: 1px solid #2a2e39; border-right: 1px solid #2a2e39; '
+            f'border-bottom: 1px solid #2a2e39; box-shadow: 0 4px 12px rgba(0,0,0,0.3);">'
+            f'<div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px;">'
+            f'<div>'
+            f'<span style="background-color: #2962FF; color: #FFF; padding: 3px 8px; border-radius: 4px; font-size: 0.75rem; font-weight: bold; margin-right: 8px;">{p.get("contract_type", "FUTURES")}</span>'
+            f'<span style="font-size: 1.35rem; font-weight: 800; color: #FFF;">{sym}</span> '
+            f'<span style="color: #94A3B8; font-size: 0.85rem; margin-left: 6px;">Lots: <b>{p.get("lots", 1)}</b> ({p.get("total_qty", p.get("lot_size", 250))} sh)</span> '
+            f'<span style="color: #64B5F6; font-size: 0.78rem; background: rgba(100,181,246,0.12); padding: 2px 7px; border-radius: 4px; margin-left: 8px;">{src_lbl}</span>'
+            f'</div>'
+            f'<div style="display: flex; align-items: center; gap: 10px;">'
+            f'<span style="background-color: {buildup_color}; color: #000; padding: 4px 12px; border-radius: 4px; font-weight: 800; font-size: 0.85rem;">{buildup_badge}</span>'
+            f'<span style="background-color: {pnl_bg}; color: {pnl_color}; padding: 4px 10px; border-radius: 4px; font-weight: 700; font-size: 0.85rem;">P&L: {pnl_pct:+.2f}%</span>'
+            f'</div>'
+            f'</div>'
+            f'<div style="display: grid; grid-template-columns: repeat(6, 1fr); gap: 10px; background-color: #0e1117; padding: 12px; border-radius: 6px; margin: 14px 0 10px 0;">'
+            f'<div><span style="color: #787b86; font-size: 0.75rem;">Spot CMP</span><br><b style="color: #00E676; font-size: 1.05rem;">₹{spot:,.2f}</b><br><span style="color: {chg_color}; font-size: 0.78rem;">{chg_arrow} {chg_pct:+.2f}%</span></div>'
+            f'<div><span style="color: #787b86; font-size: 0.75rem;">Futures LTP</span><br><b style="color: #FFF; font-size: 1.05rem;">₹{fut:,.2f}</b><br><span style="color: {basis_color}; font-size: 0.75rem;">Basis: ₹{basis:+.1f} ({basis_badge})</span></div>'
+            f'<div><span style="color: #787b86; font-size: 0.75rem;">Open Interest (OI)</span><br><b style="color: #FFF; font-size: 1.05rem;">{oi_val:,}</b><br><span style="color: {oi_chg_color}; font-size: 0.75rem;">Chg: {oi_chg_pct:+.2f}%</span></div>'
+            f'<div><span style="color: #787b86; font-size: 0.75rem;">PCR Ratio</span><br><b style="color: {pcr_color}; font-size: 1.05rem;">{pcr_val:.2f}</b><br><span style="color: {pcr_color}; font-size: 0.75rem;">{pcr_sentiment}</span></div>'
+            f'<div><span style="color: #787b86; font-size: 0.75rem;">Key Walls (CE / PE)</span><br><b style="color: #FF5252; font-size: 0.88rem;">R: ₹{q.get("resistance_strike", 0):,.0f}</b><br><b style="color: #00E676; font-size: 0.88rem;">S: ₹{q.get("support_strike", 0):,.0f}</b></div>'
+            f'<div><span style="color: #787b86; font-size: 0.75rem;">Volume / Turnover</span><br><b style="color: #FFD54F; font-size: 0.95rem;">{q.get("total_volume", 0):,} Ctr</b><br><span style="color: #A0AEC0; font-size: 0.75rem;">₹{q.get("total_turnover_cr", 0.0):,.1f} Cr</span></div>'
+            f'</div>'
+            f'<div style="background-color: #1a1e29; border-left: 4px solid {buildup_color}; border-radius: 6px; padding: 10px 14px; margin-top: 10px;">'
+            f'<div style="font-size: 0.88rem; color: #FFF; margin-bottom: 4px;"><b>🧠 Institutional OI Intelligence:</b> {buildup_desc}</div>'
+            f'<div style="font-size: 0.82rem; color: #94A3B8;"><b>🎯 Trade Strategy:</b> Entry: <b>₹{entry:,.2f}</b> | Stop Loss: <b style="color: #FF5252;">₹{p.get("stop_loss", 0):,.2f}</b> | Target: <b style="color: #00E676;">₹{p.get("target", 0):,.2f}</b> &nbsp;|&nbsp; Notes: <i>&ldquo;{p.get("notes", "Tactical F&O setup")}&rdquo;</i></div>'
+            f'</div>'
+            f'</div>'
+        )
+        st.markdown(card_html, unsafe_allow_html=True)
+
+        # Action delete button
+        c_del, c_sp = st.columns([1, 4])
+        with c_del:
+            if st.button("🗑️ Remove Contract", key=f"del_fno_pos_{pos_id}_{idx}", type="secondary"):
+                FNOTracker.delete_position(target_user, pos_id)
+                st.toast(f"Removed {sym} from {target_user.upper()}'s F&O tracker.", icon="🗑️")
+                time.sleep(0.3)
+                st.rerun()
 
 
 def render_item_tracker_view(current_user: str, data_dict: Dict[str, pd.DataFrame]):
@@ -991,12 +1335,13 @@ if run_btn or "cached_results" in st.session_state:
 
     levels_tab_name = "🎯 Custom Stock Levels (Rise / Fall)" if universe_choice == "Custom" else "🎯 Two-Way Levels (Rise / Fall)"
 
-    tab_levels, tab_indices, tab_dipleaders, tab_ai, tab_screeners, tab_tracker, tab_charts, tab_docs, tab_audit = st.tabs([
+    tab_levels, tab_indices, tab_dipleaders, tab_ai, tab_screeners, tab_fno, tab_tracker, tab_charts, tab_docs, tab_audit = st.tabs([
         levels_tab_name,
         "🏛️ Indices & Macros",
         "🚀 First-to-Recover Dip Leaders",
         "🤖 AI Trade Plans",
         "📊 Strategy Shortlists",
+        "⚡ Live F&O Section",
         "📌 Live Item Tracker",
         "📈 Technical Chart View",
         "⚙️ Strategy Documentation",
@@ -2102,6 +2447,90 @@ if run_btn or "cached_results" in st.session_state:
                                         time.sleep(0.4)
                                         st.rerun()
 
+                            # Quick 1-click Add to F&O Tracking Section
+                            with st.expander(f"⚡ Add {p.get('symbol')} to Live F&O Section"):
+                                with st.form(f"{tab_prefix}_fno_card_form_{idx}_{p.get('symbol')}", clear_on_submit=False):
+                                    fno_c1, fno_c2 = st.columns(2)
+                                    raw_cat = str(p.get("category", "")).upper()
+                                    raw_act = str(p.get("trade_action", "")).upper()
+                                    def_fno_idx = 0
+                                    if "PE" in raw_act:
+                                        def_fno_idx = 2
+                                    elif "CE" in raw_act or "OPTION" in raw_cat:
+                                        def_fno_idx = 1
+                                    
+                                    fno_inst = fno_c1.selectbox(
+                                        "Instrument Type",
+                                        ["FUTURES", "OPTION_CE", "OPTION_PE"],
+                                        index=def_fno_idx,
+                                        key=f"{tab_prefix}_fno_inst_{idx}_{p.get('symbol')}"
+                                    )
+                                    
+                                    default_fno_strike = float(p.get("recommended_strike", p.get("close", p.get("entry_price", 100.0)))) if def_fno_idx > 0 else 0.0
+                                    fno_strike_val = fno_c2.number_input(
+                                        "Strike Price (₹)",
+                                        value=default_fno_strike,
+                                        help="For Options only. Leave 0 for Futures.",
+                                        key=f"{tab_prefix}_fno_strike_{idx}_{p.get('symbol')}"
+                                    )
+                                    
+                                    fno_c3, fno_c4 = st.columns(2)
+                                    fno_lot_sz = FNOTracker.get_default_lot_size(p.get("symbol"))
+                                    fno_lots_num = fno_c3.number_input(
+                                        f"Number of Lots (1 Lot = {fno_lot_sz} sh)",
+                                        min_value=1,
+                                        value=1,
+                                        step=1,
+                                        key=f"{tab_prefix}_fno_lots_{idx}_{p.get('symbol')}"
+                                    )
+                                    fno_buy_val = fno_c4.number_input(
+                                        "Entry / Buy Price (₹)",
+                                        value=float(p.get("entry_price", p.get("close", 100.0))),
+                                        key=f"{tab_prefix}_fno_entry_{idx}_{p.get('symbol')}"
+                                    )
+                                    
+                                    fno_c5, fno_c6 = st.columns(2)
+                                    fno_sl_val = fno_c5.number_input(
+                                        "Stop Loss (₹)",
+                                        value=float(p.get("tight_stop_loss", p.get("stop_loss", fno_buy_val * 0.95))),
+                                        key=f"{tab_prefix}_fno_sl_{idx}_{p.get('symbol')}"
+                                    )
+                                    fno_tgt_val = fno_c6.number_input(
+                                        "Target (₹)",
+                                        value=float(p.get("target_1", fno_buy_val * 1.08)),
+                                        key=f"{tab_prefix}_fno_tgt_{idx}_{p.get('symbol')}"
+                                    )
+                                    
+                                    fno_exp_txt = st.text_input(
+                                        "Contract Expiry",
+                                        value="Near-Month",
+                                        key=f"{tab_prefix}_fno_exp_{idx}_{p.get('symbol')}"
+                                    )
+                                    fno_notes_txt = f"{p.get('category')} setup - {p.get('thesis', '')[:80]}"
+                                    
+                                    fno_card_submit = st.form_submit_button(
+                                        f"⚡ Track {p.get('symbol')} in Live F&O Section",
+                                        type="primary",
+                                        use_container_width=True
+                                    )
+                                    if fno_card_submit:
+                                        FNOTracker.add_position(
+                                            username=current_user_name,
+                                            symbol=p.get("symbol"),
+                                            contract_type=fno_inst,
+                                            strike=float(fno_strike_val),
+                                            expiry=str(fno_exp_txt),
+                                            lot_size=fno_lot_sz,
+                                            lots=int(fno_lots_num),
+                                            buy_price=float(fno_buy_val),
+                                            stop_loss=float(fno_sl_val),
+                                            target=float(fno_tgt_val),
+                                            notes=fno_notes_txt
+                                        )
+                                        st.toast(f"✅ Added {p.get('symbol')} ({fno_inst}) to {current_user_name}'s Live F&O Section!", icon="⚡")
+                                        time.sleep(0.4)
+                                        st.rerun()
+
                 # Build tab headers: Confirmed Strategies (Primary) + Overview tab + Conviction sub-tab + Category sub-tabs
                 tab_headers = [
                     f"🛡️ Confirmed Strategies ({len(confirmed_plans)})",
@@ -2535,6 +2964,9 @@ if run_btn or "cached_results" in st.session_state:
                 st.dataframe(pd.DataFrame(table_data), use_container_width=True)
             else:
                 st.caption("No stocks met this specific category's thresholds.")
+
+    with tab_fno:
+        render_fno_section_view(current_user=get_current_user() or "trader", data_dict=data_dict)
 
     with tab_tracker:
         render_item_tracker_view(current_user=get_current_user() or "trader", data_dict=data_dict)
