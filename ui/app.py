@@ -67,6 +67,10 @@ try:
     import core.tracker
     import core.fno_tracker
     import core.options_analytics
+    import core.backtesting
+    import core.backtesting.runner
+    import core.backtesting.strategy
+    import core.backtesting.analytics
     import screeners.dip_leaders
     import screeners.breakout
     import screeners.breakdown
@@ -83,6 +87,10 @@ try:
     importlib.reload(core.tracker)
     importlib.reload(core.fno_tracker)
     importlib.reload(core.options_analytics)
+    importlib.reload(core.backtesting)
+    importlib.reload(core.backtesting.runner)
+    importlib.reload(core.backtesting.strategy)
+    importlib.reload(core.backtesting.analytics)
     importlib.reload(screeners.dip_leaders)
     importlib.reload(screeners.breakout)
     importlib.reload(screeners.breakdown)
@@ -96,6 +104,9 @@ except Exception:
 from ai.advisor import AIAdvisor
 from core.fno_tracker import FNOTracker
 from core.options_analytics import OptionChainAnalyzer, StrategyPayoffEngine, BlackScholesEngine
+from core.backtesting.runner import BacktestRunner
+from core.backtesting.strategy import BuiltinStrategies, StrategyConfig
+from core.backtesting.analytics import BacktestResult
 from core.indices import IndexDerivativesAnalyzer, INDEX_SPECS
 from core.macro import MacroMarketEngine
 from core.tracker import PortfolioTracker
@@ -1018,6 +1029,353 @@ def render_fno_section_view(current_user: str, data_dict: Dict[str, pd.DataFrame
             st.rerun()
 
 
+def plot_backtest_equity_curve(df_equity: pd.DataFrame, strat_name: str, symbol: str) -> go.Figure:
+    fig = go.Figure()
+    if "spot_close" in df_equity.columns and not df_equity.empty:
+        s0 = float(df_equity["spot_close"].iloc[0])
+        init_cap = float(df_equity["equity"].iloc[0])
+        bench_scaled = (df_equity["spot_close"] / s0) * init_cap
+        fig.add_trace(go.Scatter(
+            x=df_equity.index,
+            y=bench_scaled,
+            mode="lines",
+            line=dict(color="#F59E0B", width=2, dash="dot"),
+            name=f"{symbol} Buy & Hold (Benchmark)",
+            hovertemplate="Benchmark: ₹%{y:,.0f}<extra></extra>"
+        ))
+
+    fig.add_trace(go.Scatter(
+        x=df_equity.index,
+        y=df_equity["equity"],
+        mode="lines",
+        line=dict(color="#00E676", width=2.5),
+        name=f"Strategy: {strat_name}",
+        hovertemplate="Strategy Equity: ₹%{y:,.0f}<extra></extra>"
+    ))
+
+    fig.update_layout(
+        title=f"📈 Historical Strategy Equity Curve vs Benchmark ({symbol})",
+        paper_bgcolor="#131722",
+        plot_bgcolor="#0e1117",
+        font=dict(color="#E0E0E0", family="Inter, sans-serif"),
+        xaxis=dict(title="Timeline", gridcolor="#1e222d"),
+        yaxis=dict(title="Portfolio Equity (₹)", gridcolor="#1e222d"),
+        margin=dict(l=40, r=40, t=50, b=40),
+        height=380,
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
+    )
+    return fig
+
+
+def plot_backtest_drawdown(drawdown_series: pd.Series) -> go.Figure:
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(
+        x=drawdown_series.index,
+        y=drawdown_series.values,
+        mode="lines",
+        line=dict(color="#FF5252", width=1.5),
+        fill="tozeroy",
+        fillcolor="rgba(255, 82, 82, 0.2)",
+        name="Drawdown %",
+        hovertemplate="Drawdown: %{y:.2f}%<extra></extra>"
+    ))
+
+    fig.update_layout(
+        title="📉 Underwater Drawdown Profile (Peak-to-Trough)",
+        paper_bgcolor="#131722",
+        plot_bgcolor="#0e1117",
+        font=dict(color="#E0E0E0", family="Inter, sans-serif"),
+        xaxis=dict(title="Timeline", gridcolor="#1e222d"),
+        yaxis=dict(title="Drawdown (%)", gridcolor="#1e222d"),
+        margin=dict(l=40, r=40, t=50, b=40),
+        height=260,
+        showlegend=False
+    )
+    return fig
+
+
+def plot_cost_breakdown(result: BacktestResult) -> go.Figure:
+    categories = ["Brokerage", "STT / CTT", "Exchange Txn", "GST (18%)", "Stamp Duty", "Slippage"]
+    values = [
+        result.total_brokerage,
+        result.total_stt,
+        result.total_exchange_charges,
+        result.total_gst,
+        result.total_stamp_duty,
+        result.total_slippage
+    ]
+    colors = ["#38BDF8", "#F59E0B", "#A78BFA", "#EC4899", "#10B981", "#EF4444"]
+
+    fig = go.Figure(go.Bar(
+        x=categories,
+        y=values,
+        marker_color=colors,
+        text=[f"₹{v:,.0f}" for v in values],
+        textposition="auto",
+        hovertemplate="%{x}: ₹%{y:,.2f}<extra></extra>"
+    ))
+
+    fig.update_layout(
+        title="💸 Indian Statutory Taxes & Execution Slippage Drag Deconstruction",
+        paper_bgcolor="#131722",
+        plot_bgcolor="#0e1117",
+        font=dict(color="#E0E0E0", family="Inter, sans-serif"),
+        xaxis=dict(gridcolor="#1e222d"),
+        yaxis=dict(title="Cost Incurred (₹)", gridcolor="#1e222d"),
+        margin=dict(l=40, r=40, t=50, b=40),
+        height=280
+    )
+    return fig
+
+
+def render_backtesting_view(current_user: str, data_dict: Dict[str, pd.DataFrame]):
+    """Renders the AI-Powered F&O Strategy Backtesting and Research Platform."""
+    st.markdown("### 🧪 AI-Powered F&O Strategy Backtesting & Research Platform")
+    st.caption(
+        "Deterministic, event-driven backtesting for Indian Equities, Index Futures, and Multi-Leg Options. "
+        "Evaluates real contract pricing, zero look-ahead bias, and exact Indian statutory trading costs (STT, GST, Stamp Duty, Slippage)."
+    )
+
+    tab_lab, tab_ai_discovery, tab_archive = st.tabs([
+        "🚀 Run Backtest & Performance Lab",
+        "🤖 AI Strategy Discovery",
+        "📜 Historical Saved Runs Archive"
+    ])
+
+    with tab_lab:
+        st.markdown("#### ⚙️ Quantitative Backtest Configuration")
+
+        with st.form("backtest_config_form", clear_on_submit=False):
+            c1, c2, c3, c4 = st.columns([1.8, 1.2, 1.2, 1.2])
+
+            with c1:
+                strat_dict = BuiltinStrategies.list_strategies()
+                sel_strat_id = st.selectbox(
+                    "Strategy Template",
+                    list(strat_dict.keys()),
+                    format_func=lambda k: strat_dict[k],
+                    key="bt_strat_sel"
+                )
+            with c2:
+                symbols_pool = ["NIFTY", "BANKNIFTY", "FINNIFTY", "RELIANCE", "TCS", "HDFCBANK", "INFY", "ICICIBANK", "SBIN", "TATASTEEL", "BAJFINANCE", "LT"]
+                sel_symbol = st.selectbox("Underlying Symbol", symbols_pool, index=0, key="bt_sym_sel")
+            with c3:
+                sel_segment = st.selectbox(
+                    "Instrument Segment",
+                    ["OPTIONS", "MULTI_LEG", "FUTURES", "EQUITY"],
+                    index=0,
+                    help="OPTIONS: CE/PE buying; MULTI_LEG: Bull Call / Bear Put Spreads; FUTURES: Leveraged contracts; EQUITY: Cash segment",
+                    key="bt_seg_sel"
+                )
+            with c4:
+                sel_strike_rule = st.selectbox(
+                    "Option Strike Selection",
+                    ["ATM", "OTM_1", "ITM_1"],
+                    index=0,
+                    help="ATM: At-the-Money; OTM_1: 1 step Out-of-the-Money; ITM_1: 1 step In-the-Money",
+                    key="bt_strike_sel"
+                )
+
+            c5, c6, c7, c8 = st.columns(4)
+            with c5:
+                start_d = st.text_input("Start Date (YYYY-MM-DD)", value="2023-01-01", key="bt_start_date")
+            with c6:
+                end_d = st.text_input("End Date (YYYY-MM-DD)", value="2024-01-01", key="bt_end_date")
+            with c7:
+                init_cap = st.number_input("Starting Capital (₹)", min_value=10000.0, value=200000.0, step=25000.0, key="bt_init_cap")
+            with c8:
+                max_hold = st.number_input("Max Holding Period (Bars)", min_value=1, value=8, step=1, key="bt_max_hold")
+
+            c9, c10, c11 = st.columns(3)
+            with c9:
+                sl_pct = st.number_input("Stop Loss (%)", min_value=0.5, value=2.5, step=0.5, key="bt_sl_pct") / 100.0
+            with c10:
+                tgt_pct = st.number_input("Profit Target (%)", min_value=1.0, value=6.0, step=0.5, key="bt_tgt_pct") / 100.0
+            with c11:
+                enable_statutory = st.checkbox("Include Statutory Indian Costs (STT, GST, Stamp Duty)", value=True, key="bt_statutory_cb")
+
+            btn_run_bt = st.form_submit_button("🚀 Run Quantitative Backtest", type="primary", use_container_width=True)
+
+        if btn_run_bt:
+            with st.spinner("⏳ Loading historical market data & executing chronological simulation..."):
+                res = BacktestRunner.run_backtest(
+                    strategy_id=sel_strat_id,
+                    symbol=sel_symbol,
+                    start_date=start_d.strip(),
+                    end_date=end_d.strip(),
+                    interval="1d",
+                    segment=sel_segment,
+                    initial_capital=float(init_cap),
+                    stop_loss_pct=float(sl_pct),
+                    target_pct=float(tgt_pct),
+                    max_holding_bars=int(max_hold),
+                    enable_statutory_costs=enable_statutory,
+                )
+                st.session_state["active_backtest_result"] = res
+                st.toast(f"✅ Backtest completed for {res.strategy_name} on {res.symbol}!", icon="🎯")
+
+        # Display Results if Available
+        result: Optional[BacktestResult] = st.session_state.get("active_backtest_result")
+        if result:
+            st.markdown("---")
+            st.markdown(f"### 📊 Performance Report: {result.strategy_name} ({result.symbol})")
+            st.caption(f"Evaluation Period: **{result.start_date}** to **{result.end_date}** | Starting Capital: **₹{result.starting_capital:,.2f}** | Ending Capital: **₹{result.ending_capital:,.2f}**")
+
+            # Executive Metrics Strip
+            k1, k2, k3, k4, k5, k6, k7, k8 = st.columns(8)
+            k1.metric("Net Profit / Loss", f"₹{result.net_pnl:,.2f}", delta=f"{result.total_return_pct:+.2f}%")
+            k2.metric("CAGR Return", f"{result.cagr_pct:+.2f}%", delta="Annualized")
+            k3.metric("Win Rate", f"{result.win_rate_pct:.1f}%", delta=f"{result.winning_trades}W / {result.losing_trades}L")
+            k4.metric("Profit Factor", f"{result.profit_factor:.2f}", delta=f"Exp: ₹{result.expectancy_per_trade:,.0f}")
+            k5.metric("Max Drawdown", f"{result.max_drawdown_pct:.2f}%", delta=f"₹{result.max_drawdown_amount:,.0f}", delta_color="inverse")
+            k6.metric("Sharpe Ratio", f"{result.sharpe_ratio:.2f}", delta=f"Sortino: {result.sortino_ratio:.2f}")
+            k7.metric("Benchmark Nifty", f"{result.benchmark_return_pct:+.2f}%", delta=f"Alpha: {result.alpha_pct:+.2f}%")
+            k8.metric("Trading Costs", f"₹{result.total_costs:,.2f}", delta=f"Drag: {result.cost_drag_pct:.1f}%", delta_color="inverse")
+
+            # Chart Row: Equity Curve & Drawdown
+            ch_c1, ch_c2 = st.columns([1.5, 1])
+            with ch_c1:
+                fig_eq = plot_backtest_equity_curve(result.equity_curve, result.strategy_name, result.symbol)
+                st.plotly_chart(fig_eq, use_container_width=True)
+            with ch_c2:
+                fig_dd = plot_backtest_drawdown(result.drawdown_series)
+                st.plotly_chart(fig_dd, use_container_width=True)
+
+            # Cost Drag Chart & Monthly Heatmap
+            r2_c1, r2_c2 = st.columns([1.2, 1.8])
+            with r2_c1:
+                fig_cost = plot_cost_breakdown(result)
+                st.plotly_chart(fig_cost, use_container_width=True)
+            with r2_c2:
+                st.markdown("##### 📅 Monthly & Annual Returns Matrix (%)")
+                if not result.monthly_returns.empty:
+                    st.dataframe(result.monthly_returns, use_container_width=True)
+                else:
+                    st.info("Insufficient monthly history for matrix breakdown.")
+
+            # Detailed Trade Ledger Table
+            st.markdown(f"##### 📋 Comprehensive Completed Trades Ledger ({len(result.trades)} Trades)")
+            st.caption("Chronological record of all simulated entries, exits, execution prices, and statutory costs.")
+
+            if result.trades:
+                df_trades = pd.DataFrame([t.to_dict() for t in result.trades])
+                st.dataframe(df_trades, use_container_width=True, hide_index=True)
+
+                # Export CSVs
+                dl_c1, dl_c2, _ = st.columns([1.5, 1.5, 3])
+                with dl_c1:
+                    csv_trades = df_trades.to_csv(index=False).encode("utf-8")
+                    st.download_button(
+                        "📥 Download Trades Ledger (CSV)",
+                        data=csv_trades,
+                        file_name=f"trades_{result.symbol}_{result.strategy_name[:8]}.csv",
+                        mime="text/csv",
+                        use_container_width=True,
+                    )
+                with dl_c2:
+                    csv_eq = result.equity_curve.to_csv().encode("utf-8")
+                    st.download_button(
+                        "📥 Download Equity Curve (CSV)",
+                        data=csv_eq,
+                        file_name=f"equity_{result.symbol}_{result.strategy_name[:8]}.csv",
+                        mime="text/csv",
+                        use_container_width=True,
+                    )
+
+            # Data Quality & Scientific Integrity Card
+            dq = result.data_quality_report
+            st.markdown(
+                f'<div style="background: #131722; border-left: 4px solid #38BDF8; border-radius: 8px; padding: 12px 16px; margin-top: 14px; font-size: 0.85rem;">'
+                f'<b style="color: #38BDF8;">🔬 Scientific Integrity & Data Provenance Audit:</b><br>'
+                f'Data Source: <b>{dq.get("data_source", "YAHOO_EXCHANGE_VERIFIED")}</b> | '
+                f'Total Bars: <b>{dq.get("total_bars", len(result.equity_curve))}</b> | '
+                f'Verified Exchange Bars: <b>{dq.get("verified_bars", 0)}</b> | '
+                f'Model-Simulated Bars: <b>{dq.get("simulated_bars", 0)}</b><br>'
+                f'<span style="color: #94A3B8;">Zero look-ahead bias enforced. Orders simulated at subsequent bar open. Real Indian statutory tax schedules applied.</span>'
+                f'</div>',
+                unsafe_allow_html=True
+            )
+
+    # Subtab 2: AI Strategy Discovery
+    with tab_ai_discovery:
+        st.markdown("#### 🤖 AI-Assisted Strategy Discovery & Code Generator")
+        st.caption(
+            "Empower AI to discover novel statistical edges, test custom momentum or mean-reversion rules, "
+            "and convert natural language hypotheses into executable quantitative backtests."
+        )
+
+        preset_options = {
+            "VOL_EXPANSION": "🚀 Bullish Volatility Thrust (RVOL >= 1.5x, RSI 55-75, Long Calls)",
+            "OVERSOLD_SPRING": "🎯 Oversold Institutional Springboard (RSI 28-42, Bounce Above EMA20)",
+            "HIGH_CONVICTION_BREAKOUT": "⚡ High-Conviction Range Breakout (RVOL >= 2.0x, Supertrend Aligned)",
+        }
+        sel_preset = st.selectbox("Choose AI Strategy Blueprint", list(preset_options.keys()), format_func=lambda k: preset_options[k], key="ai_preset_sel")
+
+        with st.form("ai_rule_discovery_form"):
+            r_c1, r_c2, r_c3 = st.columns(3)
+            with r_c1:
+                ai_min_rsi = st.slider("Minimum RSI Threshold", 10.0, 90.0, 55.0, 1.0, key="ai_min_rsi")
+                ai_max_rsi = st.slider("Maximum RSI Threshold", 20.0, 100.0, 75.0, 1.0, key="ai_max_rsi")
+            with r_c2:
+                ai_min_rvol = st.slider("Minimum Relative Volume (RVOL)", 0.8, 3.5, 1.5, 0.1, key="ai_min_rvol")
+                ai_action = st.selectbox("Trade Direction", ["ENTER_LONG", "ENTER_SHORT"], index=0, key="ai_action_sel")
+            with r_c3:
+                ai_sl = st.number_input("Rule Stop Loss (%)", 0.5, 10.0, 2.5, 0.5, key="ai_sl") / 100.0
+                ai_tgt = st.number_input("Rule Profit Target (%)", 1.0, 20.0, 6.0, 0.5, key="ai_tgt") / 100.0
+                ai_sym = st.selectbox("Test Underlying", ["NIFTY", "BANKNIFTY", "RELIANCE"], index=0, key="ai_test_sym")
+
+            btn_ai_test = st.form_submit_button("⚡ Backtest This AI Strategy Rule", type="primary", use_container_width=True)
+
+        if btn_ai_test:
+            with st.spinner("🤖 Compiling AI rule into deterministic engine & executing simulation..."):
+                custom_rules = {
+                    "min_rsi": float(ai_min_rsi),
+                    "max_rsi": float(ai_max_rsi),
+                    "min_rvol": float(ai_min_rvol),
+                    "action": ai_action,
+                }
+                res_ai = BacktestRunner.run_backtest(
+                    strategy_id="AI_CUSTOM_RULE",
+                    symbol=ai_sym,
+                    start_date="2023-01-01",
+                    end_date="2024-01-01",
+                    segment="OPTIONS",
+                    initial_capital=200000.0,
+                    stop_loss_pct=float(ai_sl),
+                    target_pct=float(ai_tgt),
+                    custom_rules=custom_rules,
+                )
+                st.session_state["active_backtest_result"] = res_ai
+                st.toast(f"✅ AI Strategy Backtest Completed: Total Return {res_ai.total_return_pct:+.2f}%!", icon="🤖")
+                st.rerun()
+
+    # Subtab 3: Saved Historical Runs Archive
+    with tab_archive:
+        st.markdown("#### 📜 Historical Saved Runs Archive & Audit Ledger")
+        st.caption("Immutable record of all historical backtests. Every run stores exact strategy version, parameters, dataset version, and P&L results.")
+
+        saved_runs = BacktestRunner.list_saved_runs()
+        if not saved_runs:
+            st.info("ℹ️ No saved backtest runs found. Execute a backtest above to automatically archive its reproducible results.")
+        else:
+            run_table = []
+            for r in saved_runs:
+                sm = r.get("summary", {})
+                run_table.append({
+                    "Run ID": r.get("run_id", "—"),
+                    "Date Created": r.get("created_at", "—")[:16].replace("T", " "),
+                    "Strategy": sm.get("strategy_name", "—"),
+                    "Symbol": sm.get("symbol", "—"),
+                    "Net P&L": f"₹{sm.get('net_pnl', 0):,.2f}",
+                    "Total Return": f"{sm.get('total_return_pct', 0):+.2f}%",
+                    "Win Rate": f"{sm.get('win_rate_pct', 0):.1f}%",
+                    "Max DD": f"{sm.get('max_drawdown_pct', 0):.2f}%",
+                    "Sharpe": f"{sm.get('sharpe_ratio', 0):.2f}",
+                    "Total Trades": sm.get("total_trades", 0),
+                })
+            st.dataframe(pd.DataFrame(run_table), use_container_width=True, hide_index=True)
+
+
 def render_item_tracker_view(current_user: str, data_dict: Dict[str, pd.DataFrame]):
     """Renders the comprehensive Live Item Tracker for the authenticated user."""
     target_user = current_user
@@ -1653,13 +2011,14 @@ if run_btn or "cached_results" in st.session_state:
 
     levels_tab_name = "🎯 Custom Stock Levels (Rise / Fall)" if universe_choice == "Custom" else "🎯 Two-Way Levels (Rise / Fall)"
 
-    tab_levels, tab_indices, tab_dipleaders, tab_ai, tab_screeners, tab_fno, tab_tracker, tab_charts, tab_docs, tab_audit = st.tabs([
+    tab_levels, tab_indices, tab_dipleaders, tab_ai, tab_screeners, tab_fno, tab_backtest, tab_tracker, tab_charts, tab_docs, tab_audit = st.tabs([
         levels_tab_name,
         "🏛️ Indices & Macros",
         "🚀 First-to-Recover Dip Leaders",
         "🤖 AI Trade Plans",
         "📊 Strategy Shortlists",
         "⚡ Live F&O Section",
+        "🧪 Strategy Backtesting & Research",
         "📌 Live Item Tracker",
         "📈 Technical Chart View",
         "⚙️ Strategy Documentation",
@@ -3286,6 +3645,9 @@ if run_btn or "cached_results" in st.session_state:
     with tab_fno:
         render_fno_section_view(current_user=get_current_user() or "trader", data_dict=data_dict)
 
+    with tab_backtest:
+        render_backtesting_view(current_user=get_current_user() or "trader", data_dict=data_dict)
+
     with tab_tracker:
         render_item_tracker_view(current_user=get_current_user() or "trader", data_dict=data_dict)
 
@@ -3583,5 +3945,9 @@ if run_btn or "cached_results" in st.session_state:
             st.info("Run a screen to inspect candidate raw data and indicators.")
 
 else:
-    st.info("👈 Select your options on the sidebar and click **'Run Live Market Screen'** to begin market scans, or review and manage your live tracked positions below:")
-    render_item_tracker_view(current_user=get_current_user() or "trader", data_dict={})
+    st.info("👈 Select your options on the sidebar and click **'Run Live Market Screen'** to begin market scans, or access strategy backtesting and live position tracking below:")
+    tab_else_backtest, tab_else_tracker = st.tabs(["🧪 Strategy Backtesting & Research", "📌 Live Item Tracker"])
+    with tab_else_backtest:
+        render_backtesting_view(current_user=get_current_user() or "trader", data_dict={})
+    with tab_else_tracker:
+        render_item_tracker_view(current_user=get_current_user() or "trader", data_dict={})

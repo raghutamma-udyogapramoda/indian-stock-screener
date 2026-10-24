@@ -21,6 +21,11 @@ __pycache__/
 # Local Data Cache & Diagnostics
 data/cache/*.parquet
 data/cache/*.json
+data/historical/cache/*.parquet
+data/historical/*.parquet
+data/backtests/*.json
+!data/backtests/.gitkeep
+!data/historical/.gitkeep
 data/tracker/*.json
 !data/tracker/.gitkeep
 logs/
