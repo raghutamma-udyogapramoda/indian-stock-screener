@@ -13,7 +13,7 @@ import pandas as pd
 
 from core.backtesting.analytics import BacktestAnalytics, BacktestResult
 from core.backtesting.costs import IndianCostModel
-from core.backtesting.data_provider import YahooHistoricalDataProvider, LocalHistoricalDataProvider
+from core.backtesting.data_provider import YahooHistoricalDataProvider, LocalHistoricalDataProvider, DataQualityReport
 from core.backtesting.engine import BacktestEngine
 from core.backtesting.strategy import BuiltinStrategies, StrategyConfig, Strategy
 from core.indicators import enrich_with_indicators
@@ -43,6 +43,7 @@ class BacktestRunner:
         enable_statutory_costs: bool = True,
         custom_rules: Optional[Dict[str, Any]] = None,
         use_local_csv_first: bool = True,
+        historical_data: Optional[pd.DataFrame] = None,
     ) -> BacktestResult:
         """
         Executes a complete backtest cycle end-to-end.
@@ -54,16 +55,40 @@ class BacktestRunner:
         df_bars = pd.DataFrame()
         dq_report = None
 
-        if use_local_csv_first:
+        if historical_data is not None and not historical_data.empty:
+            df_bars = historical_data.copy()
+            try:
+                if isinstance(df_bars.index, pd.DatetimeIndex):
+                    sub = df_bars.loc[start_date:end_date]
+                    if len(sub) >= 30:
+                        df_bars = sub
+            except Exception:
+                pass
+            data_provider = LocalHistoricalDataProvider()
+            dq_report = DataQualityReport(
+                instrument=symbol,
+                start_date=str(df_bars.index[0])[:10] if len(df_bars) > 0 else start_date,
+                end_date=str(df_bars.index[-1])[:10] if len(df_bars) > 0 else end_date,
+                total_bars=len(df_bars),
+                verified_bars=len(df_bars),
+                simulated_bars=0,
+                missing_bars=0,
+                data_source="IN_MEMORY_FEED",
+                is_verified=True,
+            )
+
+        if df_bars.empty and use_local_csv_first:
             local_prov = LocalHistoricalDataProvider()
             df_bars, dq_report = local_prov.get_historical_bars(symbol, start_date, end_date, interval)
+            if not df_bars.empty:
+                data_provider = local_prov
 
         if df_bars.empty:
             y_prov = YahooHistoricalDataProvider()
             df_bars, dq_report = y_prov.get_historical_bars(symbol, start_date, end_date, interval)
             data_provider = y_prov
-        else:
-            data_provider = local_prov
+        elif data_provider is None:
+            data_provider = LocalHistoricalDataProvider()
 
         if df_bars.empty:
             return BacktestAnalytics._empty_result(strategy_id, cls.ENGINE_VERSION, symbol, initial_capital)

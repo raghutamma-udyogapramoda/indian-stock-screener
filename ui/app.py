@@ -2815,6 +2815,176 @@ if run_btn or "cached_results" in st.session_state:
                 med_plans = [p for p in plans if _get_conviction_tier(p) == "MEDIUM"]
                 low_plans = [p for p in plans if _get_conviction_tier(p) == "LOW"]
 
+                # In-place Strategy Backtesting for AI Trade Plans
+                def _render_plan_backtest_card(p_dict, tab_prefix, idx, d_dict, as_expander=True):
+                    sym = p_dict.get("symbol", "")
+                    raw_cat = str(p_dict.get("category", "")).upper()
+                    act = str(p_dict.get("trade_action", "")).upper()
+
+                    strat_dict = BuiltinStrategies.list_strategies()
+                    if "DIP" in raw_cat:
+                        default_strat_id = "RSI_PULLBACK"
+                    elif "BTST" in raw_cat:
+                        default_strat_id = "BTST_MOMENTUM"
+                    elif "SWING" in raw_cat:
+                        default_strat_id = "DEFINED_RISK_SPREADS"
+                    elif "SPREAD" in raw_cat:
+                        default_strat_id = "DEFINED_RISK_SPREADS"
+                    else:
+                        default_strat_id = "SUPERTREND_BREAKOUT"
+
+                    if "PE" in act or "CE" in act or "OPTION" in raw_cat:
+                        default_seg = "OPTIONS"
+                    elif "SPREAD" in raw_cat:
+                        default_seg = "MULTI_LEG"
+                    elif UniverseManager.is_commodity(sym) or "FUT" in raw_cat:
+                        default_seg = "FUTURES"
+                    else:
+                        default_seg = "EQUITY"
+
+                    try:
+                        entry_val = float(p_dict.get("entry_price", 100.0))
+                        sl_val = float(p_dict.get("tight_stop_loss", p_dict.get("stop_loss", entry_val * 0.97)))
+                        tgt_val = float(p_dict.get("target_1", entry_val * 1.06))
+                        calc_sl_pct = max(0.5, round(abs(entry_val - sl_val) / entry_val * 100.0, 1)) if entry_val > 0 else 2.5
+                        calc_tgt_pct = max(1.0, round(abs(tgt_val - entry_val) / entry_val * 100.0, 1)) if entry_val > 0 else 6.0
+                    except Exception:
+                        calc_sl_pct = 2.5
+                        calc_tgt_pct = 6.0
+
+                    strat_label = strat_dict.get(default_strat_id, default_strat_id)
+                    strat_short_name = strat_label.split(" (")[0] if " (" in strat_label else strat_label
+
+                    res_key = f"ai_bt_res_{tab_prefix}_{idx}_{sym}"
+                    has_res = res_key in st.session_state
+
+                    def _body():
+                        st.markdown(f"**Suggested Strategy Model:** `{strat_label}`")
+                        st.caption(
+                            f"Quantitatively simulate how the system-suggested **{raw_cat or 'Momentum'}** strategy for **{sym}** "
+                            f"performed historically, using exact Indian trading costs (STT, GST, Stamp Duty, Slippage) and zero look-ahead bias."
+                        )
+
+                        with st.form(f"{tab_prefix}_plan_bt_form_{idx}_{sym}", clear_on_submit=False):
+                            b_c1, b_c2 = st.columns(2)
+                            sel_strat_id = b_c1.selectbox(
+                                "Strategy Model",
+                                list(strat_dict.keys()),
+                                index=list(strat_dict.keys()).index(default_strat_id) if default_strat_id in strat_dict else 0,
+                                format_func=lambda k: strat_dict[k],
+                                key=f"{tab_prefix}_strat_{idx}_{sym}"
+                            )
+                            seg_opts = ["OPTIONS", "MULTI_LEG", "FUTURES", "EQUITY"]
+                            sel_segment = b_c2.selectbox(
+                                "Instrument Segment",
+                                seg_opts,
+                                index=seg_opts.index(default_seg) if default_seg in seg_opts else 0,
+                                key=f"{tab_prefix}_seg_{idx}_{sym}"
+                            )
+
+                            b_c3, b_c4, b_c5 = st.columns(3)
+                            sl_pct_in = b_c3.number_input(
+                                "Stop Loss (%)",
+                                min_value=0.5,
+                                value=float(calc_sl_pct),
+                                step=0.5,
+                                key=f"{tab_prefix}_sl_{idx}_{sym}"
+                            )
+                            tgt_pct_in = b_c4.number_input(
+                                "Profit Target (%)",
+                                min_value=1.0,
+                                value=float(calc_tgt_pct),
+                                step=0.5,
+                                key=f"{tab_prefix}_tgt_{idx}_{sym}"
+                            )
+                            def_hold = 3 if "BTST" in raw_cat else (2 if "INTRADAY" in raw_cat else 8)
+                            hold_bars_in = b_c5.number_input(
+                                "Max Holding Bars",
+                                min_value=1,
+                                value=def_hold,
+                                step=1,
+                                key=f"{tab_prefix}_hold_{idx}_{sym}"
+                            )
+
+                            b_c6, b_c7, b_c8 = st.columns(3)
+                            start_date_in = b_c6.text_input("Start Date", value="2023-01-01", key=f"{tab_prefix}_start_{idx}_{sym}")
+                            end_date_in = b_c7.text_input("End Date", value="2024-01-01", key=f"{tab_prefix}_end_{idx}_{sym}")
+                            cap_in = b_c8.number_input("Capital (₹)", min_value=10000.0, value=200000.0, step=25000.0, key=f"{tab_prefix}_cap_{idx}_{sym}")
+
+                            stat_costs_in = st.checkbox("Include Statutory Indian Costs (STT, GST, Stamp Duty)", value=True, key=f"{tab_prefix}_stat_{idx}_{sym}")
+
+                            btn_submit_bt = st.form_submit_button(
+                                f"🚀 Run Backtest for {sym} Strategy",
+                                type="primary",
+                                use_container_width=True
+                            )
+
+                        if btn_submit_bt:
+                            with st.spinner(f"⏳ Executing historical simulation for {sym}..."):
+                                in_mem_df = d_dict.get(sym) if isinstance(d_dict, dict) else None
+                                bt_res = BacktestRunner.run_backtest(
+                                    strategy_id=sel_strat_id,
+                                    symbol=sym,
+                                    start_date=start_date_in.strip(),
+                                    end_date=end_date_in.strip(),
+                                    segment=sel_segment,
+                                    initial_capital=float(cap_in),
+                                    stop_loss_pct=float(sl_pct_in) / 100.0,
+                                    target_pct=float(tgt_pct_in) / 100.0,
+                                    max_holding_bars=int(hold_bars_in),
+                                    enable_statutory_costs=stat_costs_in,
+                                    historical_data=in_mem_df,
+                                )
+                                st.session_state[res_key] = bt_res
+                                st.session_state["active_backtest_result"] = bt_res
+                                st.toast(f"✅ Backtest completed for {sym} ({bt_res.strategy_name})!", icon="🧪")
+
+                        res_display = st.session_state.get(res_key)
+                        if res_display:
+                            st.markdown("---")
+                            st.markdown(f"#### 📊 Historical Backtest Results: {res_display.strategy_name} ({res_display.symbol})")
+                            st.caption(
+                                f"Period: **{res_display.start_date}** to **{res_display.end_date}** | "
+                                f"Initial Capital: **₹{res_display.starting_capital:,.2f}** ➔ Ending: **₹{res_display.ending_capital:,.2f}**"
+                            )
+
+                            k1, k2, k3, k4, k5, k6 = st.columns(6)
+                            k1.metric("Net Profit / Loss", f"₹{res_display.net_pnl:,.2f}", delta=f"{res_display.total_return_pct:+.2f}%")
+                            k2.metric("Win Rate", f"{res_display.win_rate_pct:.1f}%", delta=f"{res_display.winning_trades}W / {res_display.losing_trades}L")
+                            k3.metric("Profit Factor", f"{res_display.profit_factor:.2f}", delta=f"Exp: ₹{res_display.expectancy_per_trade:,.0f}")
+                            k4.metric("Max Drawdown", f"{res_display.max_drawdown_pct:.2f}%", delta=f"₹{res_display.max_drawdown_amount:,.0f}", delta_color="inverse")
+                            k5.metric("Sharpe Ratio", f"{res_display.sharpe_ratio:.2f}", delta=f"Sortino: {res_display.sortino_ratio:.2f}")
+                            k6.metric("Statutory Costs", f"₹{res_display.total_costs:,.2f}", delta=f"Drag: {res_display.cost_drag_pct:.1f}%", delta_color="inverse")
+
+                            fig_eq = plot_backtest_equity_curve(res_display.equity_curve, res_display.strategy_name, res_display.symbol)
+                            st.plotly_chart(fig_eq, use_container_width=True)
+
+                            if res_display.trades:
+                                with st.expander(f"📜 View {len(res_display.trades)} Historical Simulated Trades"):
+                                    t_rows = []
+                                    for t in res_display.trades:
+                                        t_rows.append({
+                                            "Entry Date": str(t.entry_date)[:10],
+                                            "Exit Date": str(t.exit_date)[:10],
+                                            "Segment": t.segment,
+                                            "Side": t.side,
+                                            "Gross PnL": f"₹{t.gross_pnl:,.2f}",
+                                            "Costs": f"₹{t.total_cost:,.2f}",
+                                            "Net PnL": f"₹{t.net_pnl:,.2f}",
+                                            "Return %": f"{t.return_pct:+.2f}%",
+                                            "Exit Reason": t.exit_reason
+                                        })
+                                    st.dataframe(pd.DataFrame(t_rows), use_container_width=True, hide_index=True)
+                            else:
+                                st.info("No trades were triggered during this historical period with these specific criteria.")
+
+                    if as_expander:
+                        expander_title = f"🧪 Backtest Suggested Strategy ({sym} — {strat_short_name})"
+                        with st.expander(expander_title, expanded=has_res):
+                            _body()
+                    else:
+                        _body()
+
                 # Reusable plan card rendering function with scoped widget keys
                 def _render_plans_cards_grid(plan_list, tab_prefix, is_confirmed_view=False):
                     if not plan_list:
@@ -3114,6 +3284,19 @@ if run_btn or "cached_results" in st.session_state:
                                         st.toast(f"✅ Added {p.get('symbol')} ({fno_inst}) to {current_user_name}'s Live F&O Section!", icon="⚡")
                                         time.sleep(0.4)
                                         st.rerun()
+
+                            # Quick 1-click Backtest Suggested Strategy directly from this plan card
+                            _render_plan_backtest_card(p, tab_prefix, idx, data_dict, as_expander=True)
+
+                # Top Quick Backtest Any Suggested Plan Expander on AI Trade Plans page
+                with st.expander("🧪 Quick Backtest Any Suggested Trade Plan (From This Screen)", expanded=False):
+                    st.caption("Select any stock suggested by the AI Advisor to instantly simulate its historical performance without navigating away.")
+                    plan_syms = [p.get("symbol") for p in plans if p.get("symbol")]
+                    if plan_syms:
+                        top_q_c1, _ = st.columns([2, 1])
+                        top_sel_sym = top_q_c1.selectbox("Select Stock to Backtest:", plan_syms, key="ai_top_quick_sym_sel")
+                        top_match_plan = next((p for p in plans if p.get("symbol") == top_sel_sym), plans[0])
+                        _render_plan_backtest_card(top_match_plan, "ai_top_quick", 0, data_dict, as_expander=False)
 
                 # Build tab headers: Confirmed Strategies (Primary) + Overview tab + Conviction sub-tab + Category sub-tabs
                 tab_headers = [

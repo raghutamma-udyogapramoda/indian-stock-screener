@@ -220,6 +220,60 @@ class TestStreamlitUIViews(unittest.TestCase):
         self.assertIn("Choose AI Strategy Blueprint", select_labels)
         self.assertIn("Trade Direction", select_labels)
 
+    def test_scenario_5_ai_trade_plan_page_backtest_option(self):
+        """Tests that the backtest option is available on the AI Trade Plan page and cards."""
+        at = AppTest.from_file(self.app_path, default_timeout=35)
+        at.session_state["authenticated"] = True
+        at.session_state["username"] = "test_trader"
+        at.session_state["symbols"] = ["RELIANCE"]
+        at.session_state["elapsed"] = 1.0
+        at.session_state["cached_results"] = {
+            "Breakout": [
+                {
+                    "symbol": "RELIANCE",
+                    "score": 95,
+                    "bias": "LONG",
+                    "close": 2550.0,
+                    "change_pct": 2.15,
+                    "rvol": 1.95,
+                    "reasons": ["Supertrend Breakout Above 52W Pivot"],
+                    "metrics": {"breakout_pivot": 2500.0, "52w_high": 2600.0, "atr": 45.0},
+                }
+            ],
+        }
+        at.session_state["data_dict"] = {
+            "RELIANCE": pd.DataFrame({
+                "open": [2500.0] * 35,
+                "high": [2560.0] * 35,
+                "low": [2490.0] * 35,
+                "close": [2550.0] * 35,
+                "volume": [1000000] * 35,
+            }, index=pd.date_range("2023-01-01", periods=35, freq="D"))
+        }
+        at.session_state["data_health"] = {
+            "is_latest": True,
+            "provider_name": "Verified Exchange Feed",
+            "latest_data_date": "2023-02-05",
+            "refresh_timestamp": "09:15 AM",
+        }
+
+        at.run()
+        self.assertEqual(len(at.exception), 0, f"App crashed on AI Trade Plan page: {at.exception}")
+
+        # Check backtest launcher buttons on the AI Trade Plan cards
+        btn_labels = [b.label for b in at.button]
+        self.assertTrue(
+            any("Run Backtest for RELIANCE" in b for b in btn_labels),
+            f"Expected backtest button for RELIANCE on AI trade plan card, found: {btn_labels}"
+        )
+
+        # Check that top selector or quick launcher is present
+        select_labels = [s.label for s in at.selectbox]
+        self.assertTrue(
+            any("Select Stock to Backtest" in s for s in select_labels),
+            f"Expected 'Select Stock to Backtest' on AI trade plan page, found: {select_labels}"
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

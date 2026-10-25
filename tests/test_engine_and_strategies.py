@@ -199,6 +199,15 @@ class TestBacktestEngineMechanics(unittest.TestCase):
         out = engine.run(short_df, symbol="NIFTY")
         self.assertIn("error", out)
 
+    def test_rsi_pullback_and_btst_strategy_creation(self):
+        strat_rsi = BuiltinStrategies.create("RSI_PULLBACK")
+        self.assertIsInstance(strat_rsi, AIRuleStrategy)
+        self.assertEqual(strat_rsi.name, "RSI Reversal Dip Buyer")
+
+        strat_btst = BuiltinStrategies.create("BTST_MOMENTUM")
+        self.assertIsInstance(strat_btst, AIRuleStrategy)
+        self.assertEqual(strat_btst.name, "BTST Overnight Momentum Continuation")
+
 
 if __name__ == "__main__":
     unittest.main()

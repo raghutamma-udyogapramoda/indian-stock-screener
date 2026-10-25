@@ -302,19 +302,26 @@ class AIRuleStrategy(Strategy):
         stop_loss_pct: float = 0.03,
         target_pct: float = 0.06,
         max_holding_bars: int = 10,
+        config: Optional[StrategyConfig] = None,
     ):
         r = rules or {}
-        cfg = StrategyConfig(
-            name=name,
-            version="AI-1.0",
-            segment=segment,
-            stop_loss_pct=stop_loss_pct,
-            target_pct=target_pct,
-            max_holding_bars=max_holding_bars,
-            custom_params=r,
-        )
+        if config is not None:
+            cfg = config
+            cfg.name = name or cfg.name
+            if not cfg.custom_params:
+                cfg.custom_params = r
+        else:
+            cfg = StrategyConfig(
+                name=name,
+                version="AI-1.0",
+                segment=segment,
+                stop_loss_pct=stop_loss_pct,
+                target_pct=target_pct,
+                max_holding_bars=max_holding_bars,
+                custom_params=r,
+            )
         super().__init__(cfg)
-        self.rules = r
+        self.rules = cfg.custom_params or r
 
     def generate_signals(
         self,
@@ -404,6 +411,12 @@ class BuiltinStrategies:
             return OptionsSpreadStrategy(config=config)
         elif strategy_id == "AI_CUSTOM_RULE":
             rule_dict = rules if rules else {"min_rsi": 55.0, "max_rsi": 75.0, "min_rvol": 1.25, "action": "ENTER_LONG"}
-            return AIRuleStrategy(name="AI Discovered Momentum Rule", rules=rule_dict)
+            return AIRuleStrategy(name="AI Discovered Momentum Rule", rules=rule_dict, config=config)
+        elif strategy_id == "RSI_PULLBACK":
+            rule_dict = rules if rules else {"min_rsi": 30.0, "max_rsi": 52.0, "min_rvol": 1.0, "action": "ENTER_LONG", "require_above_ema20": False}
+            return AIRuleStrategy(name="RSI Reversal Dip Buyer", rules=rule_dict, config=config)
+        elif strategy_id == "BTST_MOMENTUM":
+            rule_dict = rules if rules else {"min_rsi": 55.0, "max_rsi": 85.0, "min_rvol": 1.2, "action": "ENTER_LONG", "require_above_ema20": True}
+            return AIRuleStrategy(name="BTST Overnight Momentum Continuation", rules=rule_dict, config=config)
         else:
             return SupertrendBreakoutStrategy(config=config)
