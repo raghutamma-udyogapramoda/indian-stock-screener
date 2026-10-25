@@ -16,7 +16,7 @@ class AIAdvisor:
     """Orchestrates LLM trade evaluations using Gemini Flash with graceful algorithmic fallback."""
 
     def __init__(self, api_key: Optional[str] = None, model: str = GEMINI_MODEL):
-        self.api_key = api_key or GEMINI_API_KEY
+        self.api_key = api_key.strip() if api_key is not None else GEMINI_API_KEY
         self.model = model
         self.client = None
         self._initialize_client()

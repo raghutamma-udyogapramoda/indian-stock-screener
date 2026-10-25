@@ -280,6 +280,35 @@ class TestStreamlitUIViews(unittest.TestCase):
             f"Expected 'Select Stock to Backtest' on AI trade plan page, found: {select_labels}"
         )
 
+    def test_scenario_7_gemini_api_key_default_and_override(self):
+        """Tests that Gemini API key is pre-configured by default in sidebar and user can override it."""
+        from config.settings import DEFAULT_GEMINI_API_KEY
+        at = AppTest.from_file(self.app_path, default_timeout=35)
+        at.session_state["authenticated"] = True
+        at.session_state["username"] = "test_trader"
+        at.run()
+        self.assertEqual(len(at.exception), 0, f"App crashed on mount: {at.exception}")
+
+        # Find the Gemini API Key input in the sidebar
+        gemini_inputs = [t for t in at.text_input if "Gemini API Key" in t.label]
+        self.assertTrue(len(gemini_inputs) > 0, "Sidebar should contain a Gemini API Key input")
+        gemini_input = gemini_inputs[0]
+
+        # Verify the pre-configured default value matches DEFAULT_GEMINI_API_KEY
+        self.assertEqual(
+            gemini_input.value,
+            DEFAULT_GEMINI_API_KEY,
+            "Default Gemini API key should be pre-configured"
+        )
+
+        # Verify that the user can override the key with custom value
+        custom_key = "test_custom_user_provided_override_key_123"
+        gemini_input.input(custom_key).run()
+        self.assertEqual(len(at.exception), 0, f"App crashed after overriding Gemini API key: {at.exception}")
+        updated_input = [t for t in at.text_input if "Gemini API Key" in t.label][0]
+        self.assertEqual(updated_input.value, custom_key, "User should be able to override Gemini API Key")
+
 
 if __name__ == "__main__":
     unittest.main()
+

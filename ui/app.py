@@ -102,6 +102,7 @@ except Exception:
     pass
 
 from ai.advisor import AIAdvisor
+from config.settings import DEFAULT_GEMINI_API_KEY, GEMINI_API_KEY
 from core.fno_tracker import FNOTracker
 from core.options_analytics import OptionChainAnalyzer, StrategyPayoffEngine, BlackScholesEngine
 from core.backtesting.runner import BacktestRunner
@@ -1514,10 +1515,10 @@ top_n = st.sidebar.slider("Top Candidates per Category", min_value=3, max_value=
 st.sidebar.markdown("---")
 st.sidebar.subheader("🤖 AI Advisor Settings")
 gemini_key_input = st.sidebar.text_input(
-    "Gemini API Key (Optional)",
-    value=os.getenv("GEMINI_API_KEY", ""),
+    "Gemini API Key (Pre-configured)",
+    value=GEMINI_API_KEY or DEFAULT_GEMINI_API_KEY,
     type="password",
-    help="Get a free key from https://aistudio.google.com. If omitted, built-in Mathematical Engine generates trade plans."
+    help="Default API key is pre-configured. You can override it with your own key from https://aistudio.google.com, or clear it to use the Mathematical Engine."
 )
 
 force_live_refresh = st.sidebar.checkbox(
@@ -2605,7 +2606,7 @@ if run_btn or "cached_results" in st.session_state:
         if not all_candidates:
             st.info("No candidates met the strict screening criteria today. Markets may be consolidating.")
         else:
-            advisor = AIAdvisor(api_key=gemini_key_input if gemini_key_input else None)
+            advisor = AIAdvisor(api_key=gemini_key_input.strip() if gemini_key_input is not None else None)
             engine_name = "Google Gemini Flash (Live LLM)" if advisor.is_ai_ready else "Algorithmic Precision Engine"
             st.caption(f"Trade plans generated via **{engine_name}** | Broader Macro Regime: **{macro_context.get('macro_regime_badge', '🟢 RISK-ON')}**")
 
