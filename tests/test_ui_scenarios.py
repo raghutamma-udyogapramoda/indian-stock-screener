@@ -439,7 +439,7 @@ class TestStreamlitUIViews(unittest.TestCase):
         self.assertEqual(at.session_state.get("view_mode"), "search", "View mode should reset to search without re-screening")
 
     def test_scenario_10_high_conviction_futures_desk(self):
-        """Tests that the High-Conviction Futures Desk enforces low-failure capital defense and displays Buy/Sell futures."""
+        """Tests that the High-Conviction Futures Desk enforces low-failure capital defense and displays Buy/Sell futures without duplicate keys."""
         at = AppTest.from_file(self.app_path, default_timeout=35)
         at.session_state["authenticated"] = True
         at.session_state["username"] = "test_trader"
@@ -471,6 +471,38 @@ class TestStreamlitUIViews(unittest.TestCase):
                 }
             ],
         }
+        at.session_state["cached_ai_plans"] = [
+            {
+                "symbol": "RELIANCE",
+                "action": "BUY",
+                "score": 92,
+                "conviction": "HIGH",
+                "close": 2500.0,
+                "cmp": 2500.0,
+                "entry_price": 2500.0,
+                "stop_loss": 2450.0,
+                "target_1": 2600.0,
+                "target_2": 2700.0,
+                "rvol": 1.8,
+                "category": "Breakout",
+                "thesis": "High conviction breakout above pivot with rising institutional volumes.",
+            },
+            {
+                "symbol": "TCS",
+                "action": "SELL",
+                "score": 85,
+                "conviction": "HIGH",
+                "close": 3400.0,
+                "cmp": 3400.0,
+                "entry_price": 3400.0,
+                "stop_loss": 3450.0,
+                "target_1": 3300.0,
+                "target_2": 3200.0,
+                "rvol": 1.6,
+                "category": "Breakdown",
+                "thesis": "Distribution breakdown below key swing low with volume confirmation.",
+            }
+        ]
         at.session_state["data_dict"] = {
             "RELIANCE": pd.DataFrame({
                 "open": [2450.0] * 35, "high": [2510.0] * 35, "low": [2440.0] * 35, "close": [2500.0] * 35, "volume": [1000000] * 35
@@ -489,6 +521,10 @@ class TestStreamlitUIViews(unittest.TestCase):
         # Check that high conviction futures desk content is rendered
         raw_markdown = " ".join([m.value for m in at.markdown])
         self.assertIn("High-Conviction Futures Desk", raw_markdown)
+
+        # Check that backtest buttons for futures are generated across both desks without duplicate keys
+        fut_bt_btns = [b for b in at.button if "Backtest Futures Strategy" in b.label]
+        self.assertGreater(len(fut_bt_btns), 0, "Futures strategy backtest buttons should be rendered on qualified cards")
 
 
 if __name__ == "__main__":

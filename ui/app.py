@@ -49,7 +49,7 @@ except Exception:
 
 # Guard against Streamlit Cloud stale in-memory module caching across git updates
 import importlib
-_APP_BUILD_SIG = "2026_10_25_futures_desk_v2"
+_APP_BUILD_SIG = "2026_10_25_futures_desk_v3"
 if sys.modules.get("__CURRENT_BUILD_SIG__") != _APP_BUILD_SIG:
     for mod_name in list(sys.modules.keys()):
         if any(mod_name == pkg or mod_name.startswith(pkg + ".") for pkg in ("core", "screeners", "ai", "providers", "config")):
@@ -2092,7 +2092,8 @@ def _render_high_conviction_futures_desk(
     plans: List[Dict[str, Any]],
     data_dict: Optional[Dict[str, pd.DataFrame]] = None,
     macro_context: Optional[Dict[str, Any]] = None,
-    current_user: str = "trader"
+    current_user: str = "trader",
+    desk_prefix: str = "main_fut"
 ):
     """
     Renders the dedicated High-Conviction Futures Desk for buying and selling Indian Futures contracts.
@@ -2210,7 +2211,7 @@ def _render_high_conviction_futures_desk(
             with btn_col1:
                 if st.button(
                     f"🧪 Backtest Futures Strategy ({sym})",
-                    key=f"{prefix}_fut_bt_{idx}_{sym}",
+                    key=f"{desk_prefix}_{prefix}_fut_bt_{idx}_{sym}",
                     type="primary",
                     use_container_width=True,
                     help="Simulate historical performance of this exact futures contract over 1 year"
@@ -2240,7 +2241,7 @@ def _render_high_conviction_futures_desk(
             with btn_col2:
                 if st.button(
                     f"📌 Track in Live F&O Section ({sym} FUT)",
-                    key=f"{prefix}_fut_add_{idx}_{sym}",
+                    key=f"{desk_prefix}_{prefix}_fut_add_{idx}_{sym}",
                     use_container_width=True,
                     help="Add this futures contract to your persistent F&O tracker"
                 ):
@@ -4243,7 +4244,8 @@ elif run_btn or "cached_results" in st.session_state:
                         plans=plans,
                         data_dict=data_dict,
                         macro_context=macro_context,
-                        current_user=get_current_user() or "trader"
+                        current_user=get_current_user() or "trader",
+                        desk_prefix="ai_subtab_fut"
                     )
 
                 # Render Category sub tabs
@@ -4256,7 +4258,8 @@ elif run_btn or "cached_results" in st.session_state:
             plans=all_plans if all_plans else (plans if "plans" in locals() and plans else []),
             data_dict=data_dict,
             macro_context=macro_context,
-            current_user=get_current_user() or "trader"
+            current_user=get_current_user() or "trader",
+            desk_prefix="tab_futures_desk"
         )
 
     with tab_screeners:
