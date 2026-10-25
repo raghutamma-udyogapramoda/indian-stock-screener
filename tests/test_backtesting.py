@@ -268,6 +268,129 @@ class TestBacktestRunnerAndPersistence(unittest.TestCase):
         self.assertIsNotNone(fig_cost)
 
 
+class TestQuantitativeBacktestValidation(unittest.TestCase):
+    def test_quantitative_pass_hurdles_logic(self):
+        from core.backtesting.evaluator import enrich_plans_with_backtest_evaluations as _enrich_plans_with_backtest_evaluations
+
+        # 1. Qualified candidate: Positive return, win rate >= 45%, PF >= 1.2, DD <= 35%, trades >= 3
+        passing_plan = {
+            "symbol": "TCS",
+            "trade_action": "BUY",
+            "category": "Breakout",
+            "backtest_passed": True,
+            "backtest_metrics": {
+                "return_pct": 22.4,
+                "win_rate_pct": 52.0,
+                "profit_factor": 1.75,
+                "max_drawdown_pct": 14.5,
+                "total_trades": 18,
+                "net_pnl": 44800.0,
+                "total_costs": 3100.0,
+            }
+        }
+
+        # 2. Failed candidate: Negative return after statutory taxes/slippage
+        failing_return_plan = {
+            "symbol": "WIPRO",
+            "trade_action": "BUY",
+            "category": "Breakout",
+            "backtest_passed": False,
+            "backtest_metrics": {
+                "return_pct": -6.2,
+                "win_rate_pct": 48.0,
+                "profit_factor": 0.88,
+                "max_drawdown_pct": 21.0,
+                "total_trades": 12,
+                "net_pnl": -12400.0,
+                "total_costs": 2400.0,
+            }
+        }
+
+        # 3. Failed candidate: Excessive drawdown (> 35%)
+        failing_dd_plan = {
+            "symbol": "ADANIENT",
+            "trade_action": "BUY",
+            "category": "Momentum",
+            "backtest_passed": False,
+            "backtest_metrics": {
+                "return_pct": 15.0,
+                "win_rate_pct": 50.0,
+                "profit_factor": 1.40,
+                "max_drawdown_pct": 42.0,
+                "total_trades": 14,
+                "net_pnl": 30000.0,
+                "total_costs": 3500.0,
+            }
+        }
+
+        # 4. Failed candidate: Insufficient sample size (< 3 trades)
+        failing_sample_plan = {
+            "symbol": "NESTLEIND",
+            "trade_action": "BUY",
+            "category": "Swing",
+            "backtest_passed": False,
+            "backtest_metrics": {
+                "return_pct": 8.0,
+                "win_rate_pct": 100.0,
+                "profit_factor": 99.0,
+                "max_drawdown_pct": 3.0,
+                "total_trades": 2,
+                "net_pnl": 16000.0,
+                "total_costs": 400.0,
+            }
+        }
+
+        plans = [passing_plan, failing_return_plan, failing_dd_plan, failing_sample_plan]
+        enriched = _enrich_plans_with_backtest_evaluations(plans)
+
+        self.assertEqual(len(enriched), 4)
+        self.assertTrue(enriched[0]["backtest_passed"])
+        self.assertFalse(enriched[1]["backtest_passed"])
+        self.assertFalse(enriched[2]["backtest_passed"])
+        self.assertFalse(enriched[3]["backtest_passed"])
+
+    def test_enrich_empty_plans_list(self):
+        from core.backtesting.evaluator import enrich_plans_with_backtest_evaluations as _enrich_plans_with_backtest_evaluations
+        self.assertEqual(_enrich_plans_with_backtest_evaluations([]), [])
+
+    def test_enrich_plans_with_in_memory_dataframe(self):
+        from core.backtesting.evaluator import enrich_plans_with_backtest_evaluations as _enrich_plans_with_backtest_evaluations
+
+        dates = pd.date_range("2023-01-01", periods=60, freq="D")
+        mock_df = pd.DataFrame({
+            "open": np.linspace(100.0, 130.0, 60),
+            "high": np.linspace(102.0, 132.0, 60),
+            "low": np.linspace(99.0, 129.0, 60),
+            "close": np.linspace(101.0, 131.0, 60),
+            "volume": [500000] * 60,
+        }, index=dates)
+
+        plan = {
+            "symbol": "MOCK_GROWTH",
+            "trade_action": "BUY",
+            "category": "Breakout",
+            "close": 131.0,
+            "entry_price": 100.0,
+            "stop_loss": 97.0,
+            "tight_stop_loss": 97.0,
+            "target_1": 115.0,
+        }
+
+        data_dict = {"MOCK_GROWTH": mock_df}
+        enriched = _enrich_plans_with_backtest_evaluations([plan], data_dict=data_dict)
+
+        self.assertEqual(len(enriched), 1)
+        p = enriched[0]
+        self.assertIn("backtest_passed", p)
+        self.assertIn("backtest_metrics", p)
+        self.assertIsInstance(p["backtest_passed"], bool)
+        self.assertIsInstance(p["backtest_metrics"], dict)
+        self.assertIn("return_pct", p["backtest_metrics"])
+        self.assertIn("win_rate_pct", p["backtest_metrics"])
+        self.assertIn("profit_factor", p["backtest_metrics"])
+        self.assertIn("max_drawdown_pct", p["backtest_metrics"])
+
+
 if __name__ == "__main__":
     unittest.main()
 

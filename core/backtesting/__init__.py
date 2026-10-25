@@ -20,6 +20,10 @@ from core.backtesting.plotting import (
     plot_backtest_drawdown,
     plot_cost_breakdown,
 )
+from core.backtesting.evaluator import (
+    enrich_plans_with_backtest_evaluations,
+    evaluate_backtest_hurdles,
+)
 
 __all__ = [
     "IndianCostModel",
@@ -43,4 +47,6 @@ __all__ = [
     "plot_backtest_equity_curve",
     "plot_backtest_drawdown",
     "plot_cost_breakdown",
+    "enrich_plans_with_backtest_evaluations",
+    "evaluate_backtest_hurdles",
 ]
