@@ -116,7 +116,7 @@ from core.backtesting.plotting import (
 from core.indices import IndexDerivativesAnalyzer, INDEX_SPECS
 from core.macro import MacroMarketEngine
 from core.tracker import PortfolioTracker
-from core.universe import UniverseManager
+from core.universe import UniverseManager, NSE_FO_SEED
 from core.indicators import enrich_with_indicators
 from core.stock_levels import StockLevelAnalyzer
 from providers.breeze_provider import BreezeProvider
@@ -1738,7 +1738,534 @@ def execute_screening(u_name, custom_list, strat, top_limit, prov_mode, b_key=""
     return symbols, data, results, index_results, custom_levels, elapsed, data_health, macro_context
 
 
-if run_btn or "cached_results" in st.session_state:
+def _render_dedicated_backtest_results_page(data_dict: Optional[Dict[str, pd.DataFrame]] = None):
+    """
+    Dedicated full-page results view navigated to when a user runs a backtest from the AI Trade Plan page.
+    Includes a prominent top back button with an arrow to return seamlessly to the previous search results without searching again.
+    """
+    result: Optional[BacktestResult] = st.session_state.get("active_backtest_result")
+
+    # --- TOP NAVIGATION BAR WITH BACK ARROW ---
+    top_nav_c1, top_nav_c2 = st.columns([2.2, 5.0])
+    with top_nav_c1:
+        if st.button("⬅️ Back to Recommendations", type="primary", use_container_width=True, key="top_back_to_recos_btn", help="Return to previous search results without re-screening"):
+            st.session_state["view_mode"] = "search"
+            st.rerun()
+    with top_nav_c2:
+        st.markdown(
+            '<div style="display: flex; align-items: center; height: 100%; color: #94A3B8; font-size: 0.95rem; font-weight: 600; padding-top: 6px;">'
+            '<span>🔍 AI Trade Recommendations &nbsp;›&nbsp; <span style="color: #6366F1; font-weight: 700;">🧪 Historical Strategy Backtest Results</span></span>'
+            '</div>',
+            unsafe_allow_html=True
+        )
+
+    st.markdown("---")
+
+    if not result:
+        st.warning("⚠️ No active backtest simulation found. Please select a trade plan and click 'Run Backtest'.")
+        if st.button("⬅️ Return to Recommendations", key="btn_no_res_back"):
+            st.session_state["view_mode"] = "search"
+            st.rerun()
+        return
+
+    # --- EXECUTIVE PERFORMANCE HEADER ---
+    source_plan = st.session_state.get("active_backtest_source_plan", {})
+    source_cat = source_plan.get("category", "")
+    pnl_color = "#10B981" if result.net_pnl >= 0 else "#EF4444"
+    ret_sign = "+" if result.total_return_pct >= 0 else ""
+
+    header_html = (
+        f'<div style="background: linear-gradient(135deg, #0f172a 0%, #1e1b4b 60%, #0f172a 100%); '
+        f'border: 1px solid rgba(99, 102, 241, 0.4); border-left: 6px solid #6366F1; border-radius: 12px; '
+        f'padding: 22px 26px; margin-bottom: 20px; box-shadow: 0 8px 30px rgba(0,0,0,0.4);">'
+        f'<div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 14px;">'
+        f'<div>'
+        f'<div style="display: flex; align-items: center; gap: 10px;">'
+        f'<span style="background: rgba(99, 102, 241, 0.25); color: #A5B4FC; border: 1px solid #6366F1; '
+        f'padding: 3px 10px; border-radius: 12px; font-size: 0.75rem; font-weight: 700; text-transform: uppercase;">'
+        f'{result.symbol} • {source_cat or "MOMENTUM"}'
+        f'</span>'
+        f'<span style="color: #94A3B8; font-size: 0.8rem;">Strategy Version: {result.strategy_version}</span>'
+        f'</div>'
+        f'<h2 style="margin: 8px 0 4px 0; color: #FFFFFF; font-size: 1.65rem; font-weight: 800; letter-spacing: 0.3px;">'
+        f'{result.strategy_name} ({result.symbol})'
+        f'</h2>'
+        f'<div style="color: #CBD5E1; font-size: 0.9rem;">'
+        f'Evaluation Window: <b>{result.start_date}</b> to <b>{result.end_date}</b> &nbsp;|&nbsp; '
+        f'Capital Outlay: <b>₹{result.starting_capital:,.2f}</b> ➔ <b>₹{result.ending_capital:,.2f}</b> '
+        f'({ret_sign}{result.total_return_pct:.2f}%)'
+        f'</div>'
+        f'</div>'
+        f'<div style="text-align: right; background: rgba(0,0,0,0.3); padding: 12px 20px; border-radius: 8px; border: 1px solid rgba(255,255,255,0.08);">'
+        f'<div style="color: {pnl_color}; font-size: 1.85rem; font-weight: 900; line-height: 1.1;">'
+        f'₹{result.net_pnl:+,.2f}'
+        f'</div>'
+        f'<div style="color: #94A3B8; font-size: 0.8rem; font-weight: 600; text-transform: uppercase; margin-top: 4px;">Net P&L (Post-All Costs)</div>'
+        f'</div>'
+        f'</div>'
+        f'</div>'
+    )
+    render_html(header_html)
+
+    # --- 8-COLUMN EXECUTIVE METRICS STRIP ---
+    k1, k2, k3, k4, k5, k6, k7, k8 = st.columns(8)
+    k1.metric("Net Profit / Loss", f"₹{result.net_pnl:,.2f}", delta=f"{result.total_return_pct:+.2f}%")
+    k2.metric("CAGR Return", f"{result.cagr_pct:+.2f}%", delta="Annualized")
+    k3.metric("Win Rate", f"{result.win_rate_pct:.1f}%", delta=f"{result.winning_trades}W / {result.losing_trades}L")
+    k4.metric("Profit Factor", f"{result.profit_factor:.2f}", delta=f"Exp: ₹{result.expectancy_per_trade:,.0f}")
+    k5.metric("Max Drawdown", f"{result.max_drawdown_pct:.2f}%", delta=f"₹{result.max_drawdown_amount:,.0f}", delta_color="inverse")
+    k6.metric("Sharpe Ratio", f"{result.sharpe_ratio:.2f}", delta=f"Sortino: {result.sortino_ratio:.2f}")
+    k7.metric("Benchmark Nifty", f"{result.benchmark_return_pct:+.2f}%", delta=f"Alpha: {result.alpha_pct:+.2f}%")
+    k8.metric("Statutory Costs", f"₹{result.total_costs:,.2f}", delta=f"Drag: {result.cost_drag_pct:.1f}%", delta_color="inverse")
+
+    st.markdown("---")
+
+    # --- PLOTLY CHARTS ROW 1: EQUITY CURVE & UNDERWATER DRAWDOWN ---
+    ch1, ch2 = st.columns([1.5, 1])
+    with ch1:
+        st.markdown("##### 📈 Strategy Equity Curve vs. Buy & Hold Benchmark")
+        fig_eq = plot_backtest_equity_curve(result.equity_curve, result.strategy_name, result.symbol)
+        st.plotly_chart(fig_eq, use_container_width=True)
+    with ch2:
+        st.markdown("##### 🌊 Underwater Drawdown Profile (%)")
+        fig_dd = plot_backtest_drawdown(result.drawdown_series)
+        st.plotly_chart(fig_dd, use_container_width=True)
+
+    # --- PLOTLY CHARTS ROW 2: STATUTORY COSTS & MONTHLY HEATMAP ---
+    r2_c1, r2_c2 = st.columns([1.2, 1.8])
+    with r2_c1:
+        st.markdown("##### 💸 Indian Statutory Trading Costs Breakdown")
+        fig_cost = plot_cost_breakdown(result)
+        st.plotly_chart(fig_cost, use_container_width=True)
+    with r2_c2:
+        st.markdown("##### 📅 Monthly & Annual Returns Matrix (%)")
+        if not result.monthly_returns.empty:
+            st.dataframe(result.monthly_returns, use_container_width=True)
+        else:
+            st.info("Insufficient monthly history for matrix breakdown.")
+
+    st.markdown("---")
+
+    # --- DETAILED COMPLETED TRADES LEDGER TABLE ---
+    st.markdown(f"### 📋 Comprehensive Completed Trades Ledger ({len(result.trades)} Executions)")
+    st.caption("Chronological record of simulated entries, exits, execution prices, and realistic statutory slippage/taxes.")
+
+    if result.trades:
+        t_rows = []
+        for t in result.trades:
+            entry_d = getattr(t, "entry_date", getattr(t, "entry_time", ""))
+            exit_d = getattr(t, "exit_date", getattr(t, "exit_time", ""))
+            side_act = getattr(t, "side", getattr(t, "action", "LONG"))
+            cost_val = getattr(getattr(t, "costs", None), "total_cost", getattr(t, "total_cost", 0.0))
+            ret_val = getattr(t, "return_pct", 0.0)
+            ret_str = f"{ret_val * 100.0:+.2f}%" if abs(ret_val) < 1.0 else f"{ret_val:+.2f}%"
+
+            t_rows.append({
+                "Trade #": getattr(t, "trade_id", ""),
+                "Entry Date": str(entry_d)[:10],
+                "Exit Date": str(exit_d)[:10],
+                "Segment": getattr(t, "segment", "EQUITY"),
+                "Side": side_act,
+                "Entry Price": f"₹{getattr(t, 'entry_price', 0.0):,.2f}",
+                "Exit Price": f"₹{getattr(t, 'exit_price', 0.0):,.2f}",
+                "Quantity / Lots": getattr(t, "quantity", 0),
+                "Holding Bars": getattr(t, "holding_bars", 0),
+                "Gross PnL": f"₹{getattr(t, 'gross_pnl', 0.0):,.2f}",
+                "Statutory Costs": f"₹{cost_val:,.2f}",
+                "Net PnL": f"₹{getattr(t, 'net_pnl', 0.0):,.2f}",
+                "Return %": ret_str,
+                "Exit Reason": getattr(t, "exit_reason", "")
+            })
+
+        df_trades_ui = pd.DataFrame(t_rows)
+        st.dataframe(df_trades_ui, use_container_width=True, hide_index=True)
+
+        dl_col1, dl_col2, _ = st.columns([1.5, 1.5, 3])
+        with dl_col1:
+            csv_trades = df_trades_ui.to_csv(index=False).encode("utf-8")
+            st.download_button(
+                "📥 Download Trades Ledger (CSV)",
+                data=csv_trades,
+                file_name=f"trades_{result.symbol}_{result.strategy_name[:8]}.csv",
+                mime="text/csv",
+                use_container_width=True,
+                key="dl_trades_csv_dedicated"
+            )
+        with dl_col2:
+            csv_eq = result.equity_curve.to_csv().encode("utf-8")
+            st.download_button(
+                "📥 Download Equity Curve (CSV)",
+                data=csv_eq,
+                file_name=f"equity_{result.symbol}_{result.strategy_name[:8]}.csv",
+                mime="text/csv",
+                use_container_width=True,
+                key="dl_equity_csv_dedicated"
+            )
+    else:
+        st.info("No trades were triggered during this historical period with these specific criteria.")
+
+    # --- BOTTOM NAVIGATION BAR WITH BACK ARROW ---
+    st.markdown("---")
+    bot_nav_c1, _ = st.columns([2.2, 5.0])
+    with bot_nav_c1:
+        if st.button("⬅️ Back to Recommendations", type="primary", use_container_width=True, key="bottom_back_to_recos_btn", help="Return to previous search results without re-screening"):
+            st.session_state["view_mode"] = "search"
+            st.rerun()
+
+
+def _extract_ultra_conviction_futures_setups(
+    plans: List[Dict[str, Any]],
+    data_dict: Optional[Dict[str, pd.DataFrame]] = None,
+    macro_context: Optional[Dict[str, Any]] = None
+) -> List[Dict[str, Any]]:
+    """
+    Filters and formats ultra-high conviction futures trading recommendations (Buy & Sell).
+    Since futures trading is time-bound and demands significant capital (SPAN + Exposure margin),
+    only setups that meet the strict 'least likely to fail' criteria are passed through:
+    1. Underlying is an active, liquid F&O contract (NSE_FO or Index).
+    2. Conviction is HIGH or Score >= 80 with healthy trend and volume confirmation.
+    3. Minimum Asymmetric Risk-Reward >= 1.4:1.
+    4. Trend alignment: Longs above 20 & 50 EMA (RSI 50-75); Shorts below 20 & 50 EMA (RSI 28-48).
+    5. Clean invalidation stop loss anchored to structure (CMP not breached).
+    """
+    if not plans:
+        return []
+
+    fno_tickers = set(NSE_FO_SEED) | set(INDEX_SPECS.keys())
+    try:
+        loaded_fno = UniverseManager.get_tickers("NSE_FO")
+        if loaded_fno:
+            fno_tickers.update(loaded_fno)
+    except Exception:
+        pass
+
+    qualified = []
+    for p in plans:
+        sym = p.get("symbol", "")
+        if not sym:
+            continue
+
+        # Check F&O eligibility
+        is_fno = (sym in fno_tickers) or (sym in INDEX_SPECS) or UniverseManager.is_commodity(sym)
+        if not is_fno and len(fno_tickers) > 0:
+            continue
+
+        act = str(p.get("trade_action", "")).upper()
+        if "AVOID" in act:
+            continue
+
+        score = float(p.get("score", 70.0))
+        conv = str(p.get("conviction", "")).upper()
+        if conv != "HIGH" and score < 80.0:
+            continue
+
+        try:
+            entry = float(p.get("entry_price", 0.0))
+            sl = float(p.get("tight_stop_loss", p.get("stop_loss", 0.0)))
+            t1 = float(p.get("target_1", 0.0))
+            t2 = float(p.get("target_2", t1 * 1.04))
+            cmp = float(p.get("close", entry))
+        except Exception:
+            continue
+
+        if entry <= 0 or sl <= 0 or t1 <= 0 or cmp <= 0:
+            continue
+
+        risk = abs(entry - sl)
+        reward = abs(t1 - entry)
+        rr = reward / risk if risk > 0 else 1.0
+
+        if rr < 1.4:
+            continue
+
+        is_buy = ("BUY" in act or act == "LONG") and "PE" not in act
+        is_sell = ("SELL" in act or act == "SHORT") or "PE" in act
+
+        # Invalidation check
+        if is_buy and cmp <= sl:
+            continue
+        if is_sell and cmp >= sl:
+            continue
+
+        # Indicator checks
+        rsi = 50.0
+        rvol = float(p.get("rvol", 1.2))
+        ema20_val = 0.0
+        df_sym = data_dict.get(sym) if isinstance(data_dict, dict) else None
+        if df_sym is not None and len(df_sym) >= 30:
+            last_row = df_sym.iloc[-1]
+            rsi = float(last_row.get("rsi_14", 50.0))
+            ema20_val = float(last_row.get("ema_20", 0.0))
+
+        if is_buy:
+            if ema20_val > 0 and cmp < ema20_val * 0.98:
+                continue
+            if rsi > 76.0:  # Avoid overbought exhaustion
+                continue
+        elif is_sell:
+            if ema20_val > 0 and cmp > ema20_val * 1.02:
+                continue
+            if rsi < 25.0:  # Avoid oversold rubber-band bounce
+                continue
+
+        # Lot size
+        if sym in INDEX_SPECS:
+            lot_size = INDEX_SPECS[sym].get("lot_size", 25)
+        elif UniverseManager.is_commodity(sym):
+            lot_size = 1
+        else:
+            lot_size = max(50, int(round(1000000.0 / max(10.0, cmp) / 25.0) * 25))
+
+        margin_req = round(cmp * lot_size * 0.18, 0)
+        max_risk_lot = round(risk * lot_size, 2)
+        max_gain_t1_lot = round(reward * lot_size, 2)
+        max_gain_t2_lot = round(abs(t2 - entry) * lot_size, 2)
+
+        # Expiry: Last Thursday of month
+        today = datetime.now()
+        year = today.year
+        month = today.month
+        import calendar
+        last_day = calendar.monthrange(year, month)[1]
+        last_date = datetime(year, month, last_day)
+        offset = (last_date.weekday() - 3) % 7
+        last_thursday = last_date - timedelta(days=offset)
+        if last_thursday < today:
+            next_month = month + 1 if month < 12 else 1
+            next_year = year if month < 12 else year + 1
+            next_last_day = calendar.monthrange(next_year, next_month)[1]
+            next_last_date = datetime(next_year, next_month, next_last_day)
+            offset = (next_last_date.weekday() - 3) % 7
+            last_thursday = next_last_date - timedelta(days=offset)
+
+        days_to_expiry = max(1, (last_thursday - today).days)
+        expiry_str = last_thursday.strftime("%d-%b-%Y").upper()
+
+        defense_pillars = [
+            f"Trend Alignment: {'Price firmly above EMA 20 & 50' if is_buy else 'Price breaking below EMA 20 & 50'}",
+            f"Institutional Momentum: RSI at {rsi:.1f} ({'Healthy bullish thrust' if is_buy else 'Sustained bearish breakdown'})",
+            f"Volume Protection: Relative volume {rvol:.1f}x with institutional absorption",
+            f"Asymmetric R:R: 1:{rr:.1f}R with hard invalidation SL at ₹{sl:,.2f}"
+        ]
+
+        qualified.append({
+            "symbol": sym,
+            "is_buy": is_buy,
+            "action": "BUY" if is_buy else "SELL",
+            "action_label": "🟢 BUY FUTURES (LONG BUILDUP)" if is_buy else "🔴 SELL FUTURES (SHORT BUILDUP)",
+            "cmp": cmp,
+            "entry_price": entry,
+            "stop_loss": sl,
+            "target_1": t1,
+            "target_2": t2,
+            "risk_per_share": risk,
+            "reward_per_share": reward,
+            "risk_reward_ratio": round(rr, 2),
+            "score": score,
+            "conviction": conv or "HIGH",
+            "lot_size": lot_size,
+            "approx_margin": margin_req,
+            "max_risk_lot": max_risk_lot,
+            "max_gain_t1_lot": max_gain_t1_lot,
+            "max_gain_t2_lot": max_gain_t2_lot,
+            "expiry_date": expiry_str,
+            "days_to_expiry": days_to_expiry,
+            "thesis": p.get("thesis", ""),
+            "defense_pillars": defense_pillars,
+            "category": p.get("category", "Futures Momentum")
+        })
+
+    qualified.sort(key=lambda x: (x["score"], x["risk_reward_ratio"]), reverse=True)
+    return qualified
+
+
+def _render_high_conviction_futures_desk(
+    plans: List[Dict[str, Any]],
+    data_dict: Optional[Dict[str, pd.DataFrame]] = None,
+    macro_context: Optional[Dict[str, Any]] = None,
+    current_user: str = "trader"
+):
+    """
+    Renders the dedicated High-Conviction Futures Desk for buying and selling Indian Futures contracts.
+    Enforces the 'Least Likely to Fail' quantitative shield: Score >= 80, OI buildup confirmation,
+    trend alignment, and strict risk-to-reward to protect large capital outlays against time decay.
+    """
+    st.markdown("### ⚡ High-Conviction Futures Desk (Buy & Sell)")
+    st.caption(
+        "Institutional leveraged desk for Indian Futures contracts (NSE F&O). "
+        "Because futures trading is strictly **time-bound** (monthly expiry cycles) and demands **substantial margin capital** (₹1.5L–₹2.5L+ per lot), "
+        "this desk enforces an ultra-strict **Capital Protection Filter** to display **only those recommendations that are least likely to fail**."
+    )
+
+    # --- 4 SAFETY SHIELD PILLARS BANNER ---
+    shield_html = (
+        f'<div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 12px; margin: 12px 0 20px 0;">'
+        f'<div style="background: linear-gradient(135deg, rgba(6, 78, 59, 0.45) 0%, rgba(4, 120, 87, 0.25) 100%); border: 1px solid #10B981; border-left: 5px solid #10B981; border-radius: 8px; padding: 14px 16px;">'
+        f'<div style="color: #34D399; font-size: 0.78rem; font-weight: 700; text-transform: uppercase;">1. Capital Outlay Defense</div>'
+        f'<div style="color: #FFF; font-size: 0.95rem; font-weight: 700; margin: 3px 0;">SPAN + Exposure Anchor</div>'
+        f'<div style="color: #94A3B8; font-size: 0.75rem; line-height: 1.35;">Strict stop loss capped to structural pivot. Max risk per lot is calculated upfront in exact Rupees.</div>'
+        f'</div>'
+        f'<div style="background: linear-gradient(135deg, rgba(14, 42, 59, 0.45) 0%, rgba(3, 105, 161, 0.25) 100%); border: 1px solid #38BDF8; border-left: 5px solid #38BDF8; border-radius: 8px; padding: 14px 16px;">'
+        f'<div style="color: #38BDF8; font-size: 0.78rem; font-weight: 700; text-transform: uppercase;">2. Expiry Horizon Discipline</div>'
+        f'<div style="color: #FFF; font-size: 0.95rem; font-weight: 700; margin: 3px 0;">Near-Month Expiry Window</div>'
+        f'<div style="color: #94A3B8; font-size: 0.75rem; line-height: 1.35;">Filters out illiquid far-month contracts. Protects trades against rollover drag and final-week decay.</div>'
+        f'</div>'
+        f'<div style="background: linear-gradient(135deg, rgba(55, 48, 163, 0.45) 0%, rgba(79, 70, 229, 0.25) 100%); border: 1px solid #818CF8; border-left: 5px solid #818CF8; border-radius: 8px; padding: 14px 16px;">'
+        f'<div style="color: #A5B4FC; font-size: 0.78rem; font-weight: 700; text-transform: uppercase;">3. Institutional OI Buildup</div>'
+        f'<div style="color: #FFF; font-size: 0.95rem; font-weight: 700; margin: 3px 0;">True Accumulation / Distribution</div>'
+        f'<div style="color: #94A3B8; font-size: 0.75rem; line-height: 1.35;">Requires confirmed Long Buildup (Longs) or Short Buildup (Shorts) with relative volume &gt; 1.25x.</div>'
+        f'</div>'
+        f'<div style="background: linear-gradient(135deg, rgba(69, 10, 10, 0.4) 0%, rgba(180, 83, 9, 0.25) 100%); border: 1px solid #F59E0B; border-left: 5px solid #F59E0B; border-radius: 8px; padding: 14px 16px;">'
+        f'<div style="color: #FBBF24; font-size: 0.78rem; font-weight: 700; text-transform: uppercase;">4. Trend & Macro Confluence</div>'
+        f'<div style="color: #FFF; font-size: 0.95rem; font-weight: 700; margin: 3px 0;">Zero Counter-Trend Trap</div>'
+        f'<div style="color: #94A3B8; font-size: 0.75rem; line-height: 1.35;">Price firmly above EMA 20 & 50 for BUY, below EMA 20 & 50 for SELL. Zero trade against broader macro.</div>'
+        f'</div>'
+        f'</div>'
+    )
+    render_html(shield_html)
+
+    # Extract high-conviction futures setups
+    fut_setups = _extract_ultra_conviction_futures_setups(plans, data_dict, macro_context)
+    buy_setups = [s for s in fut_setups if s["is_buy"]]
+    sell_setups = [s for s in fut_setups if not s["is_buy"]]
+
+    f_sub1, f_sub2, f_sub3 = st.tabs([
+        f"🟢 BUY Futures ({len(buy_setups)})",
+        f"🔴 SELL Futures ({len(sell_setups)})",
+        f"📋 All High-Conviction Futures ({len(fut_setups)})"
+    ])
+
+    def _render_fut_cards(items, prefix):
+        if not items:
+            st.markdown(
+                f'<div style="background: linear-gradient(135deg, rgba(30, 41, 59, 0.7) 0%, rgba(15, 23, 42, 0.9) 100%); border: 1px solid rgba(148, 163, 184, 0.2); border-left: 6px solid #38BDF8; border-radius: 8px; padding: 18px 22px; margin: 12px 0;">'
+                f'<div style="color: #38BDF8; font-weight: 700; font-size: 1.05rem;">🛡️ Capital Preservation Active: 0 Low-Risk Futures Setups</div>'
+                f'<div style="color: #CBD5E1; font-size: 0.88rem; margin-top: 6px; line-height: 1.4;">'
+                f'No setups currently satisfy the strict low-failure criteria (Score &ge; 80, OI surge, trend alignment, R:R &ge; 1.4). '
+                f'In leveraged futures, capital protection is paramount — waiting for high-confluence setups prevents devastating drawdowns.'
+                f'</div>'
+                f'</div>',
+                unsafe_allow_html=True
+            )
+            return
+
+        for idx, item in enumerate(items):
+            sym = item["symbol"]
+            is_b = item["is_buy"]
+            border_c = "#10B981" if is_b else "#EF4444"
+            bg_grad = "rgba(6, 78, 59, 0.35)" if is_b else "rgba(69, 10, 10, 0.35)"
+            badge_text = "🟢 BUY FUTURES (LONG BUILDUP)" if is_b else "🔴 SELL FUTURES (SHORT BUILDUP)"
+
+            card_html = (
+                f'<div style="background: linear-gradient(135deg, {bg_grad} 0%, rgba(15, 23, 42, 0.9) 100%); '
+                f'border: 1px solid {border_c}; border-left: 6px solid {border_c}; border-radius: 10px; '
+                f'padding: 18px 22px; margin-bottom: 16px; box-shadow: 0 4px 16px rgba(0,0,0,0.3);">'
+                f'<div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px;">'
+                f'<div>'
+                f'<span style="background: rgba(0,0,0,0.4); color: {border_c}; border: 1px solid {border_c}; '
+                f'padding: 3px 10px; border-radius: 12px; font-size: 0.75rem; font-weight: 800; text-transform: uppercase;">'
+                f'{badge_text}'
+                f'</span>'
+                f'<h3 style="margin: 6px 0 2px 0; color: #FFF; font-size: 1.35rem; font-weight: 800;">'
+                f'{sym} Futures • Near-Month ({item["expiry_date"]})'
+                f'</h3>'
+                f'<div style="color: #94A3B8; font-size: 0.82rem;">'
+                f'Underlying CMP: <b>₹{item["cmp"]:,.2f}</b> &nbsp;|&nbsp; '
+                f'Days to Expiry: <b>{item["days_to_expiry"]} Sessions</b> &nbsp;|&nbsp; '
+                f'Conviction Score: <b>{item["score"]:.0f}/100</b>'
+                f'</div>'
+                f'</div>'
+                f'<div style="text-align: right;">'
+                f'<div style="color: #FFF; font-size: 1.15rem; font-weight: 800;">Lot Size: {item["lot_size"]}</div>'
+                f'<div style="color: #FBBF24; font-size: 0.82rem; font-weight: 600;">Approx. Margin: ₹{item["approx_margin"]:,.0f}</div>'
+                f'</div>'
+                f'</div>'
+                f'<div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 10px; margin: 14px 0 10px 0; background: rgba(0,0,0,0.25); padding: 10px 14px; border-radius: 6px;">'
+                f'<div><span style="color: #94A3B8; font-size: 0.72rem;">ENTRY TRIGGER</span><br><b style="color: #FFF; font-size: 0.95rem;">₹{item["entry_price"]:,.2f}</b></div>'
+                f'<div><span style="color: #F87171; font-size: 0.72rem;">HARD STOP LOSS</span><br><b style="color: #F87171; font-size: 0.95rem;">₹{item["stop_loss"]:,.2f}</b><br><span style="font-size: 0.72rem; color: #EF4444;">Max Risk: ₹{item["max_risk_lot"]:,.0f}/lot</span></div>'
+                f'<div><span style="color: #34D399; font-size: 0.72rem;">TARGET 1 (R:R 1:{item["risk_reward_ratio"]:.1f})</span><br><b style="color: #34D399; font-size: 0.95rem;">₹{item["target_1"]:,.2f}</b><br><span style="font-size: 0.72rem; color: #10B981;">Est Gain: ₹{item["max_gain_t1_lot"]:,.0f}/lot</span></div>'
+                f'<div><span style="color: #60A5FA; font-size: 0.72rem;">TARGET 2 (RUNNER)</span><br><b style="color: #60A5FA; font-size: 0.95rem;">₹{item["target_2"]:,.2f}</b><br><span style="font-size: 0.72rem; color: #3B82F6;">Est Gain: ₹{item["max_gain_t2_lot"]:,.0f}/lot</span></div>'
+                f'</div>'
+                f'<div style="margin-top: 10px;">'
+                f'<div style="color: #CBD5E1; font-size: 0.78rem; font-weight: 700; text-transform: uppercase; margin-bottom: 4px;">🛡️ Why this setup is least likely to fail:</div>'
+                f'<div style="display: flex; flex-wrap: wrap; gap: 8px;">'
+                + "".join([f'<span style="background: rgba(255,255,255,0.06); color: #E2E8F0; padding: 2px 8px; border-radius: 4px; font-size: 0.74rem;">✓ {p}</span>' for p in item["defense_pillars"]]) +
+                f'</div>'
+                f'</div>'
+                f'</div>'
+            )
+            render_html(card_html)
+
+            # Two 1-click action buttons
+            btn_col1, btn_col2 = st.columns([1, 1])
+            with btn_col1:
+                if st.button(
+                    f"🧪 Backtest Futures Strategy ({sym})",
+                    key=f"{prefix}_fut_bt_{idx}_{sym}",
+                    type="primary",
+                    use_container_width=True,
+                    help="Simulate historical performance of this exact futures contract over 1 year"
+                ):
+                    with st.spinner(f"⏳ Executing futures simulation for {sym}..."):
+                        strat_id = "SUPERTREND_BREAKOUT" if is_b else "EMA_CROSSOVER"
+                        in_df = data_dict.get(sym) if isinstance(data_dict, dict) else None
+                        bt_res = BacktestRunner.run_backtest(
+                            strategy_id=strat_id,
+                            symbol=sym,
+                            start_date="2023-01-01",
+                            end_date="2024-01-01",
+                            segment="FUTURES",
+                            initial_capital=max(200000.0, float(item["approx_margin"]) * 1.5),
+                            stop_loss_pct=float(item["risk_per_share"]) / float(item["entry_price"]),
+                            target_pct=float(item["reward_per_share"]) / float(item["entry_price"]),
+                            max_holding_bars=item["days_to_expiry"],
+                            enable_statutory_costs=True,
+                            historical_data=in_df,
+                        )
+                        st.session_state["active_backtest_result"] = bt_res
+                        st.session_state["active_backtest_source_plan"] = item
+                        st.session_state["view_mode"] = "backtest_results"
+                        st.toast(f"✅ Futures backtest completed for {sym}!", icon="🧪")
+                        st.rerun()
+
+            with btn_col2:
+                if st.button(
+                    f"📌 Track in Live F&O Section ({sym} FUT)",
+                    key=f"{prefix}_fut_add_{idx}_{sym}",
+                    use_container_width=True,
+                    help="Add this futures contract to your persistent F&O tracker"
+                ):
+                    FNOTracker.add_watchlist_item(
+                        current_user,
+                        sym,
+                        contract_type="FUTURES",
+                        strike_price=0.0,
+                        expiry_date=item["expiry_date"],
+                        lot_size=item["lot_size"],
+                        notes=f"High-Conviction Futures {item['action']} • Margin ₹{item['approx_margin']:,.0f}"
+                    )
+                    st.toast(f"✅ Added {sym} Futures to {current_user.upper()}'s Live F&O Section!", icon="⚡")
+                    time.sleep(0.4)
+                    st.rerun()
+
+            st.markdown("<div style='margin-bottom: 12px;'></div>", unsafe_allow_html=True)
+
+    with f_sub1:
+        _render_fut_cards(buy_setups, "buy")
+
+    with f_sub2:
+        _render_fut_cards(sell_setups, "sell")
+
+    with f_sub3:
+        _render_fut_cards(fut_setups, "all")
+
+
+if run_btn:
+    st.session_state["view_mode"] = "search"
+
+if st.session_state.get("view_mode") == "backtest_results" and st.session_state.get("active_backtest_result"):
+    _render_dedicated_backtest_results_page(data_dict=st.session_state.get("data_dict", {}))
+elif run_btn or "cached_results" in st.session_state:
     if run_btn:
         with st.spinner("Syncing candles, macro indicators & computing vectorized screeners..."):
             symbols, data_dict, results, index_results, custom_levels, elapsed, data_health, macro_context = execute_screening(
@@ -1762,9 +2289,12 @@ if run_btn or "cached_results" in st.session_state:
             st.session_state["data_health"] = data_health
             st.session_state["macro_context"] = macro_context
 
-    symbols = st.session_state["symbols"]
-    data_dict = st.session_state["data_dict"]
-    results = st.session_state["cached_results"]
+    results = st.session_state.get("cached_results", {})
+    data_dict = st.session_state.get("data_dict", {})
+    symbols = st.session_state.get("symbols")
+    if not symbols:
+        symbols = list(data_dict.keys()) if data_dict else [c.get("symbol") for lst in results.values() for c in lst if isinstance(c, dict) and c.get("symbol")]
+        st.session_state["symbols"] = symbols
     index_results = st.session_state.get("index_results", [])
     custom_levels = st.session_state.get("custom_levels", [])
     if not custom_levels and data_dict:
@@ -1773,7 +2303,7 @@ if run_btn or "cached_results" in st.session_state:
             st.session_state["custom_levels"] = custom_levels
         except Exception:
             pass
-    elapsed = st.session_state["elapsed"]
+    elapsed = st.session_state.get("elapsed", 0.0)
     macro_context = st.session_state.get("macro_context")
     if not macro_context or not isinstance(macro_context, dict):
         try:
@@ -1920,15 +2450,29 @@ if run_btn or "cached_results" in st.session_state:
         delta_color="normal" if is_live else "off"
     )
 
+    # Pre-generate or retrieve AI trade plans so all tabs (AI Plans, Futures Desk) have access
+    all_plans = []
+    if all_candidates:
+        if "cached_ai_plans" in st.session_state and not run_btn:
+            all_plans = st.session_state["cached_ai_plans"]
+        else:
+            try:
+                advisor = AIAdvisor(api_key=gemini_key_input.strip() if gemini_key_input is not None else None)
+                all_plans = advisor.analyze_candidates(all_candidates, macro_context=macro_context)
+                st.session_state["cached_ai_plans"] = all_plans
+            except Exception:
+                all_plans = []
+
     st.markdown("---")
 
     levels_tab_name = "🎯 Custom Stock Levels (Rise / Fall)" if universe_choice == "Custom" else "🎯 Two-Way Levels (Rise / Fall)"
 
-    tab_levels, tab_indices, tab_dipleaders, tab_ai, tab_screeners, tab_fno, tab_backtest, tab_tracker, tab_charts, tab_docs, tab_audit = st.tabs([
+    tab_levels, tab_indices, tab_dipleaders, tab_ai, tab_futures, tab_screeners, tab_fno, tab_backtest, tab_tracker, tab_charts, tab_docs, tab_audit = st.tabs([
         levels_tab_name,
         "🏛️ Indices & Macros",
         "🚀 First-to-Recover Dip Leaders",
         "🤖 AI Trade Plans",
+        "⚡ High-Conviction Futures Desk",
         "📊 Strategy Shortlists",
         "⚡ Live F&O Section",
         "🧪 Strategy Backtesting & Research",
@@ -2611,7 +3155,11 @@ if run_btn or "cached_results" in st.session_state:
             st.caption(f"Trade plans generated via **{engine_name}** | Broader Macro Regime: **{macro_context.get('macro_regime_badge', '🟢 RISK-ON')}**")
 
             with st.spinner("Generating risk-reward evaluations, macro impact and trade thesis..."):
-                plans = advisor.analyze_candidates(all_candidates, macro_context=macro_context)
+                if all_plans:
+                    plans = all_plans
+                else:
+                    plans = advisor.analyze_candidates(all_candidates, macro_context=macro_context)
+                    st.session_state["cached_ai_plans"] = plans
 
             if not plans:
                 st.info("No trade plans could be generated from current shortlisted candidates.")
@@ -2943,7 +3491,10 @@ if run_btn or "cached_results" in st.session_state:
                                 )
                                 st.session_state[res_key] = bt_res
                                 st.session_state["active_backtest_result"] = bt_res
+                                st.session_state["active_backtest_source_plan"] = p_dict
+                                st.session_state["view_mode"] = "backtest_results"
                                 st.toast(f"✅ Backtest completed for {sym} ({bt_res.strategy_name})!", icon="🧪")
+                                st.rerun()
 
                         res_display = st.session_state.get(res_key)
                         if res_display:
@@ -2969,16 +3520,22 @@ if run_btn or "cached_results" in st.session_state:
                                 with st.expander(f"📜 View {len(res_display.trades)} Historical Simulated Trades"):
                                     t_rows = []
                                     for t in res_display.trades:
+                                        entry_d = getattr(t, "entry_date", getattr(t, "entry_time", ""))
+                                        exit_d = getattr(t, "exit_date", getattr(t, "exit_time", ""))
+                                        side_act = getattr(t, "side", getattr(t, "action", "LONG"))
+                                        cost_val = getattr(getattr(t, "costs", None), "total_cost", getattr(t, "total_cost", 0.0))
+                                        ret_val = getattr(t, "return_pct", 0.0)
+                                        ret_str = f"{ret_val * 100.0:+.2f}%" if abs(ret_val) < 1.0 else f"{ret_val:+.2f}%"
                                         t_rows.append({
-                                            "Entry Date": str(t.entry_date)[:10],
-                                            "Exit Date": str(t.exit_date)[:10],
-                                            "Segment": t.segment,
-                                            "Side": t.side,
-                                            "Gross PnL": f"₹{t.gross_pnl:,.2f}",
-                                            "Costs": f"₹{t.total_cost:,.2f}",
-                                            "Net PnL": f"₹{t.net_pnl:,.2f}",
-                                            "Return %": f"{t.return_pct:+.2f}%",
-                                            "Exit Reason": t.exit_reason
+                                            "Entry Date": str(entry_d)[:10],
+                                            "Exit Date": str(exit_d)[:10],
+                                            "Segment": getattr(t, "segment", "EQUITY"),
+                                            "Side": side_act,
+                                            "Gross PnL": f"₹{getattr(t, 'gross_pnl', 0.0):,.2f}",
+                                            "Costs": f"₹{cost_val:,.2f}",
+                                            "Net PnL": f"₹{getattr(t, 'net_pnl', 0.0):,.2f}",
+                                            "Return %": ret_str,
+                                            "Exit Reason": getattr(t, "exit_reason", "")
                                         })
                                     st.dataframe(pd.DataFrame(t_rows), use_container_width=True, hide_index=True)
                             else:
@@ -3304,11 +3861,13 @@ if run_btn or "cached_results" in st.session_state:
                         top_match_plan = next((p for p in plans if p.get("symbol") == top_sel_sym), plans[0])
                         _render_plan_backtest_card(top_match_plan, "ai_top_quick", 0, data_dict, as_expander=False)
 
-                # Build tab headers: Confirmed Strategies (Primary) + Overview tab + Conviction sub-tab + Category sub-tabs
+                # Build tab headers: Confirmed Strategies (Primary) + Overview tab + Conviction sub-tab + Futures sub-tab + Category sub-tabs
+                fut_plans = _extract_ultra_conviction_futures_setups(plans, data_dict, macro_context)
                 tab_headers = [
                     f"🛡️ Confirmed Strategies ({len(confirmed_plans)})",
                     f"🌟 All Plans ({len(plans)})",
-                    f"🔥 Conviction ({len(plans)})"
+                    f"🔥 Conviction ({len(plans)})",
+                    f"⚡ High-Conviction Futures ({len(fut_plans)})"
                 ] + [f"{cat_labels[k]} ({len(plans_by_cat[k])})" for k in ordered_keys]
                 ai_sub_tabs = st.tabs(tab_headers)
 
@@ -3669,10 +4228,27 @@ if run_btn or "cached_results" in st.session_state:
                             else:
                                 st.info(f"No setups match the current filter selection ({conv_filter_opt}).")
 
+                # 4. Render High-Conviction Futures Desk sub-tab
+                with ai_sub_tabs[3]:
+                    _render_high_conviction_futures_desk(
+                        plans=plans,
+                        data_dict=data_dict,
+                        macro_context=macro_context,
+                        current_user=get_current_user() or "trader"
+                    )
+
                 # Render Category sub tabs
-                for sub_i, cat_k in enumerate(ordered_keys, start=3):
+                for sub_i, cat_k in enumerate(ordered_keys, start=4):
                     with ai_sub_tabs[sub_i]:
                         _render_plans_cards_grid(plans_by_cat[cat_k], f"cat_{cat_k.lower()}")
+
+    with tab_futures:
+        _render_high_conviction_futures_desk(
+            plans=all_plans if all_plans else (plans if "plans" in locals() and plans else []),
+            data_dict=data_dict,
+            macro_context=macro_context,
+            current_user=get_current_user() or "trader"
+        )
 
     with tab_screeners:
         for cat, c_list in results.items():
@@ -3681,7 +4257,7 @@ if run_btn or "cached_results" in st.session_state:
                 table_data = []
                 for c in c_list:
                     vol_2x_badge = "🔥 YES (>2X)" if c.get("vol_confirmed_2x") else "—"
-                    rvol_9_str = f"{c.get('rvol_9', c['rvol']):.1f}x"
+                    rvol_9_str = f"{c.get('rvol_9', c.get('rvol', 1.0)):.1f}x"
                     
                     retest_val = c.get("retest_support_50pct", 0)
                     retest_str = f"₹{retest_val:,.1f}" if retest_val > 0 else "—"
@@ -3691,7 +4267,7 @@ if run_btn or "cached_results" in st.session_state:
                     panic_badge = "🛡️ YES" if c.get("panic_day_resilient") else "—"
 
                     comm_unit = ""
-                    sym_c = c["symbol"]
+                    sym_c = c.get("symbol", "")
                     if UniverseManager.is_commodity(sym_c):
                         comm_unit_map = {
                             "GOLDM": " (₹/10g Mini)",
@@ -3706,11 +4282,12 @@ if run_btn or "cached_results" in st.session_state:
                         }
                         comm_unit = comm_unit_map.get(sym_c, f" ({UniverseManager.get_commodity_unit(sym_c)})")
 
+                    close_v = c.get("close", 0.0)
                     row = {
-                        "Symbol": c["symbol"],
-                        "Score": c["score"],
-                        "LTP (₹)": f"₹{c['close']:,.2f}{comm_unit}" if comm_unit else c["close"],
-                        "Change %": f"{c['change_pct']:+.2f}%",
+                        "Symbol": sym_c,
+                        "Score": c.get("score", 0),
+                        "LTP (₹)": f"₹{close_v:,.2f}{comm_unit}" if comm_unit else close_v,
+                        "Change %": f"{c.get('change_pct', 0.0):+.2f}%",
                         "Quote Captured": c.get("capture_time", data_health.get("refresh_time_short", "Live")),
                         "50% Retest Level": retest_str,
                         "Sector Tailwind": tailwind_badge,
@@ -4273,6 +4850,25 @@ else:
                 with st.spinner("Screening for breakdown candidates and put option plays..."):
                     symbols, data_dict, results, index_results, custom_levels, elapsed, data_health, macro_context = execute_screening(
                         "NSE_FO", "", "Breakdown (Short & Distribution)", 5, provider_choice,
+                        breeze_api_key_in, breeze_secret_key_in, breeze_session_token_in,
+                        bypass_cache=bypass_cache_flag, cache_ttl=cache_ttl
+                    )
+                    st.session_state["symbols"] = symbols
+                    st.session_state["data_dict"] = data_dict
+                    st.session_state["cached_results"] = results
+                    st.session_state["index_results"] = index_results
+                    st.session_state["custom_levels"] = custom_levels
+                    st.session_state["elapsed"] = elapsed
+                    st.session_state["data_health"] = data_health
+                    st.session_state["macro_context"] = macro_context
+                    st.rerun()
+
+        p_col7, _ = st.columns([1, 1])
+        with p_col7:
+            if st.button("⚡ High-Conviction Futures Desk (Buy & Sell)", key="preset_futures_desk", use_container_width=True, type="primary"):
+                with st.spinner("Screening F&O universe for lowest-failure-rate Buy & Sell futures setups..."):
+                    symbols, data_dict, results, index_results, custom_levels, elapsed, data_health, macro_context = execute_screening(
+                        "NSE_FO", "", "All Strategies", 6, provider_choice,
                         breeze_api_key_in, breeze_secret_key_in, breeze_session_token_in,
                         bypass_cache=bypass_cache_flag, cache_ttl=cache_ttl
                     )

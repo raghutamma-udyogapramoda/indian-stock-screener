@@ -308,6 +308,188 @@ class TestStreamlitUIViews(unittest.TestCase):
         updated_input = [t for t in at.text_input if "Gemini API Key" in t.label][0]
         self.assertEqual(updated_input.value, custom_key, "User should be able to override Gemini API Key")
 
+    def test_scenario_8_trade_dataclass_backward_compatibility(self):
+        """Tests that Trade dataclass has entry_date, exit_date, side, and total_cost properties without AttributeError."""
+        from datetime import datetime
+        t = Trade(
+            trade_id="TRD_TEST_PROP",
+            symbol="NIFTY",
+            segment="FUTURES",
+            action="LONG",
+            entry_time=datetime(2023, 5, 10, 9, 15),
+            exit_time=datetime(2023, 5, 15, 15, 15),
+            entry_price=18200.0,
+            exit_price=18450.0,
+            quantity=50,
+            holding_bars=5,
+            gross_pnl=12500.0,
+            net_pnl=12100.0,
+            return_pct=0.0137,
+            exit_reason="Target 1 Hit",
+            costs=CostBreakdown(total_cost=400.0, brokerage=40.0, stt=250.0, slippage=110.0),
+        )
+
+        # Ensure no AttributeError occurs when accessing entry_date, exit_date, side, and total_cost
+        self.assertEqual(str(t.entry_date)[:10], "2023-05-10")
+        self.assertEqual(str(t.exit_date)[:10], "2023-05-15")
+        self.assertEqual(t.side, "LONG")
+        self.assertEqual(t.total_cost, 400.0)
+
+    def test_scenario_9_dedicated_backtest_navigation_and_back_arrow(self):
+        """Tests navigating to the dedicated backtest page on click, and navigating back via top back button."""
+        at = AppTest.from_file(self.app_path, default_timeout=35)
+        at.session_state["authenticated"] = True
+        at.session_state["symbols"] = ["RELIANCE"]
+        at.session_state["elapsed"] = 1.0
+        at.session_state["cached_results"] = {"Breakout": [{"symbol": "RELIANCE", "score": 90, "close": 2500.0}]}
+        at.session_state["data_dict"] = {
+            "RELIANCE": pd.DataFrame({
+                "open": [2480.0] * 35,
+                "high": [2520.0] * 35,
+                "low": [2470.0] * 35,
+                "close": [2500.0] * 35,
+                "volume": [1000000] * 35,
+            }, index=pd.date_range("2023-01-01", periods=35, freq="D"))
+        }
+
+        # Simulate user launching backtest from AI trade plan
+        dates = pd.date_range("2023-01-01", periods=30, freq="D")
+        eq_df = pd.DataFrame({"equity": [200000.0 + i * 100.0 for i in range(30)]}, index=dates)
+        mock_res = BacktestResult(
+            strategy_name="EMA Trend Pullback",
+            strategy_version="1.0",
+            symbol="RELIANCE",
+            start_date="2023-01-01",
+            end_date="2023-01-30",
+            starting_capital=200000.0,
+            ending_capital=203000.0,
+            gross_pnl=3080.0,
+            net_pnl=3000.0,
+            total_return_pct=1.5,
+            cagr_pct=18.0,
+            win_rate_pct=70.0,
+            profit_factor=2.0,
+            expectancy_per_trade=300.0,
+            total_trades=1,
+            winning_trades=1,
+            losing_trades=0,
+            avg_win_trade=3000.0,
+            avg_loss_trade=0.0,
+            max_consecutive_wins=1,
+            max_consecutive_losses=0,
+            max_drawdown_amount=500.0,
+            max_drawdown_pct=0.25,
+            max_drawdown_days=2,
+            annualized_volatility_pct=10.0,
+            sharpe_ratio=1.5,
+            sortino_ratio=2.0,
+            calmar_ratio=3.0,
+            worst_trade_pnl=0.0,
+            worst_trade_pct=0.0,
+            total_costs=80.0,
+            total_brokerage=40.0,
+            total_stt=20.0,
+            total_exchange_charges=5.0,
+            total_gst=8.0,
+            total_stamp_duty=2.0,
+            total_slippage=5.0,
+            cost_drag_pct=0.5,
+            benchmark_name="NIFTY 50",
+            benchmark_return_pct=1.0,
+            alpha_pct=0.5,
+            equity_curve=eq_df,
+            drawdown_series=pd.Series([0.0] * 30, index=dates),
+            trades=[
+                Trade(
+                    trade_id="TRD_REL_01",
+                    symbol="RELIANCE",
+                    segment="EQUITY",
+                    action="BUY",
+                    entry_time=dates[2],
+                    exit_time=dates[10],
+                    entry_price=2400.0,
+                    exit_price=2500.0,
+                    quantity=30,
+                    holding_bars=8,
+                    gross_pnl=3000.0,
+                    net_pnl=2920.0,
+                    return_pct=0.041,
+                    exit_reason="Target Hit",
+                    costs=CostBreakdown(total_cost=80.0),
+                )
+            ],
+            monthly_returns=pd.DataFrame({"Jan": [1.5], "Annual": [1.5]}, index=[2023]),
+            data_quality_report={"total_bars": 30},
+        )
+
+        at.session_state["view_mode"] = "backtest_results"
+        at.session_state["active_backtest_result"] = mock_res
+        at.session_state["active_backtest_source_plan"] = {"symbol": "RELIANCE", "strategy_name": "EMA Trend Pullback"}
+
+        at.run()
+        self.assertEqual(len(at.exception), 0, f"App crashed on dedicated backtest results page: {at.exception}")
+
+        # Check top back button exists
+        back_btns = [b for b in at.button if "Back to Recommendations" in b.label]
+        self.assertGreater(len(back_btns), 0, "Top Back arrow button must be present on dedicated backtest results page")
+
+        # Simulate user clicking back button to return to search results
+        back_btns[0].click().run()
+        self.assertEqual(len(at.exception), 0, f"App crashed on clicking Back to Recommendations: {at.exception}")
+        self.assertEqual(at.session_state.get("view_mode"), "search", "View mode should reset to search without re-screening")
+
+    def test_scenario_10_high_conviction_futures_desk(self):
+        """Tests that the High-Conviction Futures Desk enforces low-failure capital defense and displays Buy/Sell futures."""
+        at = AppTest.from_file(self.app_path, default_timeout=35)
+        at.session_state["authenticated"] = True
+        at.session_state["username"] = "test_trader"
+        at.session_state["symbols"] = ["RELIANCE", "TCS"]
+        at.session_state["elapsed"] = 1.0
+        at.session_state["cached_results"] = {
+            "Breakout": [
+                {
+                    "symbol": "RELIANCE",
+                    "score": 92,
+                    "bias": "LONG",
+                    "close": 2500.0,
+                    "change_pct": 2.5,
+                    "rvol": 1.8,
+                    "reasons": ["High Conviction 52W Breakout"],
+                    "metrics": {"breakout_pivot": 2450.0},
+                }
+            ],
+            "Breakdown": [
+                {
+                    "symbol": "TCS",
+                    "score": 85,
+                    "bias": "SHORT",
+                    "close": 3400.0,
+                    "change_pct": -2.1,
+                    "rvol": 1.6,
+                    "reasons": ["Breakdown below support"],
+                    "metrics": {"breakdown_pivot": 3450.0},
+                }
+            ],
+        }
+        at.session_state["data_dict"] = {
+            "RELIANCE": pd.DataFrame({
+                "open": [2450.0] * 35, "high": [2510.0] * 35, "low": [2440.0] * 35, "close": [2500.0] * 35, "volume": [1000000] * 35
+            }, index=pd.date_range("2023-01-01", periods=35, freq="D")),
+            "TCS": pd.DataFrame({
+                "open": [3450.0] * 35, "high": [3460.0] * 35, "low": [3390.0] * 35, "close": [3400.0] * 35, "volume": [800000] * 35
+            }, index=pd.date_range("2023-01-01", periods=35, freq="D")),
+        }
+        at.session_state["data_health"] = {
+            "is_latest": True, "provider_name": "Exchange", "latest_data_date": "2023-02-05", "refresh_timestamp": "09:15"
+        }
+
+        at.run()
+        self.assertEqual(len(at.exception), 0, f"App crashed in screened state with Futures desk: {at.exception}")
+
+        # Check that high conviction futures desk content is rendered
+        raw_markdown = " ".join([m.value for m in at.markdown])
+        self.assertIn("High-Conviction Futures Desk", raw_markdown)
+
 
 if __name__ == "__main__":
     unittest.main()

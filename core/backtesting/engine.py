@@ -131,6 +131,22 @@ class Trade:
             "legs_summary": self.legs_summary,
         }
 
+    @property
+    def entry_date(self) -> str:
+        return self.entry_time.strftime("%Y-%m-%d") if hasattr(self.entry_time, "strftime") else str(self.entry_time)[:10]
+
+    @property
+    def exit_date(self) -> str:
+        return self.exit_time.strftime("%Y-%m-%d") if hasattr(self.exit_time, "strftime") else str(self.exit_time)[:10]
+
+    @property
+    def side(self) -> str:
+        return self.action
+
+    @property
+    def total_cost(self) -> float:
+        return self.costs.total_cost if self.costs else 0.0
+
 
 @dataclass
 class PortfolioState:
