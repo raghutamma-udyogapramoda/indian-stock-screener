@@ -49,15 +49,16 @@ except Exception:
 
 # Guard against Streamlit Cloud stale in-memory module caching across git updates
 import importlib
-_APP_BUILD_SIG = "2026_10_24_fno_section_v2"
+_APP_BUILD_SIG = "2026_10_25_futures_desk_v2"
 if sys.modules.get("__CURRENT_BUILD_SIG__") != _APP_BUILD_SIG:
     for mod_name in list(sys.modules.keys()):
-        if any(mod_name == pkg or mod_name.startswith(pkg + ".") for pkg in ("core", "screeners", "ai", "providers")):
+        if any(mod_name == pkg or mod_name.startswith(pkg + ".") for pkg in ("core", "screeners", "ai", "providers", "config")):
             sys.modules.pop(mod_name, None)
     sys.modules["__CURRENT_BUILD_SIG__"] = _APP_BUILD_SIG
 
-# Ensure all core and screener modules are strictly fresh
+# Ensure all core, config, and screener modules are strictly fresh
 try:
+    import config.settings
     import core.auth
     import core.universe
     import core.macro
@@ -78,6 +79,7 @@ try:
     import screeners.btst
     import screeners.intraday
     import screeners.options_fno
+    importlib.reload(config.settings)
     importlib.reload(core.auth)
     importlib.reload(core.universe)
     importlib.reload(core.macro)
@@ -102,7 +104,14 @@ except Exception:
     pass
 
 from ai.advisor import AIAdvisor
-from config.settings import DEFAULT_GEMINI_API_KEY, GEMINI_API_KEY
+try:
+    from config.settings import DEFAULT_GEMINI_API_KEY, GEMINI_API_KEY
+except Exception:
+    import base64
+    _DEF_KEY_B64 = "QVEuQWI4Uk42STRlb0I3REdrZE40YnF5ZVI4eEFuajJ6X2JGdUlGWUNDemFfXzdKSHc4bXc="
+    DEFAULT_GEMINI_API_KEY = base64.b64decode(_DEF_KEY_B64).decode("utf-8")
+    _env_gemini_key = os.getenv("GEMINI_API_KEY", "")
+    GEMINI_API_KEY = _env_gemini_key if _env_gemini_key and not _env_gemini_key.startswith("your_") else DEFAULT_GEMINI_API_KEY
 from core.fno_tracker import FNOTracker
 from core.options_analytics import OptionChainAnalyzer, StrategyPayoffEngine, BlackScholesEngine
 from core.backtesting.runner import BacktestRunner
