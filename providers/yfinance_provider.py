@@ -65,6 +65,48 @@ class YahooFinanceProvider(BaseDataProvider):
                 continue
         return None
 
+    @staticmethod
+    def _fetch_direct_v8_history(yf_symbol: str, range_str: str = "1y") -> Optional[pd.DataFrame]:
+        """
+        Direct HTTP query to Yahoo Finance v8 chart API for historical daily candles.
+        Serves as a resilient fallback when yfinance internal scrapers encounter timeouts or 429 rate limits.
+        """
+        urls = [
+            f"https://query1.finance.yahoo.com/v8/finance/chart/{yf_symbol}?interval=1d&range={range_str}",
+            f"https://query2.finance.yahoo.com/v8/finance/chart/{yf_symbol}?interval=1d&range={range_str}",
+        ]
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+            "Accept": "application/json"
+        }
+        for url in urls:
+            try:
+                req = urllib.request.Request(url, headers=headers)
+                with urllib.request.urlopen(req, timeout=6.0) as resp:
+                    if resp.status == 200:
+                        data = json.loads(resp.read().decode('utf-8'))
+                        res = data.get("chart", {}).get("result", [])
+                        if not res:
+                            continue
+                        timestamps = res[0].get("timestamp", [])
+                        indicators = res[0].get("indicators", {}).get("quote", [{}])[0]
+                        if not timestamps or not indicators:
+                            continue
+                        dates = pd.to_datetime(timestamps, unit="s", utc=True).tz_convert("Asia/Kolkata")
+                        df = pd.DataFrame({
+                            "open": indicators.get("open", []),
+                            "high": indicators.get("high", []),
+                            "low": indicators.get("low", []),
+                            "close": indicators.get("close", []),
+                            "volume": indicators.get("volume", [])
+                        }, index=dates)
+                        df = df.dropna()
+                        if len(df) >= 10:
+                            return df
+            except Exception:
+                continue
+        return None
+
     def _sync_intraday_candle(self, clean_symbol: str, df: pd.DataFrame, live_quote: Optional[dict] = None) -> pd.DataFrame:
         """
         Synchronizes the latest daily candle in df with the true real-time intraday quote.
@@ -156,8 +198,18 @@ class YahooFinanceProvider(BaseDataProvider):
         # 2. Fetch fresh historical candles from external Yahoo Finance API
         yf_symbol = UniverseManager.to_yfinance_symbol(symbol)
         try:
-            ticker = yf.Ticker(yf_symbol)
-            df = ticker.history(period=period, interval=interval, auto_adjust=True)
+            df = None
+            try:
+                ticker = yf.Ticker(yf_symbol)
+                df = ticker.history(period=period, interval=interval, auto_adjust=True)
+            except Exception:
+                df = None
+
+            if df is None or df.empty or len(df) < 10:
+                # Resilient direct v8 chart API fallback for futures or throttled endpoints
+                range_str = "1y" if period in ["1y", "12mo", "ytd"] else ("6mo" if period in ["6mo", "6m"] else "1y")
+                df = self._fetch_direct_v8_history(yf_symbol, range_str=range_str)
+
             if df is None or df.empty or len(df) < 10:
                 raise ValueError(f"Empty or insufficient data returned from yfinance for {yf_symbol}")
 

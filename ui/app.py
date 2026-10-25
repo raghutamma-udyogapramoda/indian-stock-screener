@@ -1585,7 +1585,12 @@ def execute_screening(u_name, custom_list, strat, top_limit, prov_mode, b_key=""
         symbols = UniverseManager.get_tickers(u_name)
 
     # 2. Select data provider
-    if "Static" in prov_mode:
+    is_commodity_universe = ("GLOBAL" in u_name.upper()) or ("MCX" in u_name.upper()) or (len(symbols) > 0 and all(UniverseManager.is_global_commodity(s) or UniverseManager.is_commodity(s) for s in symbols if s))
+    if is_commodity_universe and ("NSE Direct" in prov_mode or "Static" in prov_mode or "Live" in prov_mode):
+        provider = YahooFinanceProvider(cache_ttl_hours=cache_ttl)
+        prov_mode = "Yahoo Finance (Default)"
+        data = provider.fetch_batch_ohlcv(symbols, period="1y", interval="1d", max_workers=10, use_cache=not bypass_cache)
+    elif "Static" in prov_mode:
         provider = BreezeStaticProvider()
         data = provider.fetch_batch_ohlcv(symbols, period="1y", interval="1day", max_workers=5)
     elif "Live" in prov_mode:
