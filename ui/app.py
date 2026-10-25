@@ -1490,9 +1490,9 @@ if provider_choice == "ICICI Breeze (Live Account)":
 
 universe_choice = st.sidebar.selectbox(
     "Select Asset Universe",
-    ["NIFTY_50", "🏛️ INDICES (NIFTY, BankNifty, Sensex...)", "NSE_FO", "NIFTY_500", "MCX Commodities", "Custom"],
+    ["NIFTY_50", "🏛️ INDICES (NIFTY, BankNifty, Sensex...)", "NSE_FO", "NIFTY_500", "🌐 Global Commodities (Gold, Silver, Crude, Copper...)", "MCX Commodities", "Custom"],
     index=0,
-    help="NIFTY_50: Top 50 bluechips. INDICES: Nifty, BankNifty, Sensex, Midcap, Sectoral indices. NSE_FO: 180+ liquid F&O stocks. MCX Commodities: Gold M, Silver Mini, Crude, Gas, Metals. NIFTY_500: Broad market."
+    help="NIFTY_50: Top 50 bluechips. INDICES: Nifty, BankNifty, Sensex, Midcap, Sectoral indices. NSE_FO: 180+ liquid F&O stocks. Global Commodities: COMEX/NYMEX/ICE/LME Gold, Silver, Crude, Copper in native USD ($). MCX Commodities: Indian landed prices in ₹. NIFTY_500: Broad market."
 )
 
 custom_tickers = ""
@@ -1577,6 +1577,8 @@ def execute_screening(u_name, custom_list, strat, top_limit, prov_mode, b_key=""
         symbols = [s.strip().upper() for s in custom_list.replace(",", " ").split() if s.strip()]
     elif u_name == "MCX Commodities":
         symbols = UniverseManager.get_tickers("MCX")
+    elif "GLOBAL" in u_name.upper():
+        symbols = UniverseManager.get_tickers("GLOBAL_COMMODITIES")
     elif "INDICES" in u_name.upper():
         symbols = UniverseManager.get_tickers("INDICES")
     else:
@@ -1955,7 +1957,7 @@ def _extract_ultra_conviction_futures_setups(
             continue
 
         # Check F&O eligibility
-        is_fno = (sym in fno_tickers) or (sym in INDEX_SPECS) or UniverseManager.is_commodity(sym)
+        is_fno = (sym in fno_tickers) or (sym in INDEX_SPECS) or UniverseManager.is_commodity(sym) or UniverseManager.is_global_commodity(sym)
         if not is_fno and len(fno_tickers) > 0:
             continue
 
@@ -2020,7 +2022,7 @@ def _extract_ultra_conviction_futures_setups(
         # Lot size
         if sym in INDEX_SPECS:
             lot_size = INDEX_SPECS[sym].get("lot_size", 25)
-        elif UniverseManager.is_commodity(sym):
+        elif UniverseManager.is_commodity(sym) or UniverseManager.is_global_commodity(sym):
             lot_size = 1
         else:
             lot_size = max(50, int(round(1000000.0 / max(10.0, cmp) / 25.0) * 25))
@@ -2169,6 +2171,9 @@ def _render_high_conviction_futures_desk(
             bg_grad = "rgba(6, 78, 59, 0.35)" if is_b else "rgba(69, 10, 10, 0.35)"
             badge_text = "🟢 BUY FUTURES (LONG BUILDUP)" if is_b else "🔴 SELL FUTURES (SHORT BUILDUP)"
 
+            curr = UniverseManager.get_commodity_currency(sym)
+            margin_curr = "$" if curr == "$" else "₹"
+
             card_html = (
                 f'<div style="background: linear-gradient(135deg, {bg_grad} 0%, rgba(15, 23, 42, 0.9) 100%); '
                 f'border: 1px solid {border_c}; border-left: 6px solid {border_c}; border-radius: 10px; '
@@ -2183,21 +2188,21 @@ def _render_high_conviction_futures_desk(
                 f'{sym} Futures • Near-Month ({item["expiry_date"]})'
                 f'</h3>'
                 f'<div style="color: #94A3B8; font-size: 0.82rem;">'
-                f'Underlying CMP: <b>₹{item["cmp"]:,.2f}</b> &nbsp;|&nbsp; '
+                f'Underlying CMP: <b>{curr}{item["cmp"]:,.2f}</b> &nbsp;|&nbsp; '
                 f'Days to Expiry: <b>{item["days_to_expiry"]} Sessions</b> &nbsp;|&nbsp; '
                 f'Conviction Score: <b>{item["score"]:.0f}/100</b>'
                 f'</div>'
                 f'</div>'
                 f'<div style="text-align: right;">'
                 f'<div style="color: #FFF; font-size: 1.15rem; font-weight: 800;">Lot Size: {item["lot_size"]}</div>'
-                f'<div style="color: #FBBF24; font-size: 0.82rem; font-weight: 600;">Approx. Margin: ₹{item["approx_margin"]:,.0f}</div>'
+                f'<div style="color: #FBBF24; font-size: 0.82rem; font-weight: 600;">Approx. Margin: {margin_curr}{item["approx_margin"]:,.0f}</div>'
                 f'</div>'
                 f'</div>'
                 f'<div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 10px; margin: 14px 0 10px 0; background: rgba(0,0,0,0.25); padding: 10px 14px; border-radius: 6px;">'
-                f'<div><span style="color: #94A3B8; font-size: 0.72rem;">ENTRY TRIGGER</span><br><b style="color: #FFF; font-size: 0.95rem;">₹{item["entry_price"]:,.2f}</b></div>'
-                f'<div><span style="color: #F87171; font-size: 0.72rem;">HARD STOP LOSS</span><br><b style="color: #F87171; font-size: 0.95rem;">₹{item["stop_loss"]:,.2f}</b><br><span style="font-size: 0.72rem; color: #EF4444;">Max Risk: ₹{item["max_risk_lot"]:,.0f}/lot</span></div>'
-                f'<div><span style="color: #34D399; font-size: 0.72rem;">TARGET 1 (R:R 1:{item["risk_reward_ratio"]:.1f})</span><br><b style="color: #34D399; font-size: 0.95rem;">₹{item["target_1"]:,.2f}</b><br><span style="font-size: 0.72rem; color: #10B981;">Est Gain: ₹{item["max_gain_t1_lot"]:,.0f}/lot</span></div>'
-                f'<div><span style="color: #60A5FA; font-size: 0.72rem;">TARGET 2 (RUNNER)</span><br><b style="color: #60A5FA; font-size: 0.95rem;">₹{item["target_2"]:,.2f}</b><br><span style="font-size: 0.72rem; color: #3B82F6;">Est Gain: ₹{item["max_gain_t2_lot"]:,.0f}/lot</span></div>'
+                f'<div><span style="color: #94A3B8; font-size: 0.72rem;">ENTRY TRIGGER</span><br><b style="color: #FFF; font-size: 0.95rem;">{curr}{item["entry_price"]:,.2f}</b></div>'
+                f'<div><span style="color: #F87171; font-size: 0.72rem;">HARD STOP LOSS</span><br><b style="color: #F87171; font-size: 0.95rem;">{curr}{item["stop_loss"]:,.2f}</b><br><span style="font-size: 0.72rem; color: #EF4444;">Max Risk: {curr}{item["max_risk_lot"]:,.0f}/lot</span></div>'
+                f'<div><span style="color: #34D399; font-size: 0.72rem;">TARGET 1 (R:R 1:{item["risk_reward_ratio"]:.1f})</span><br><b style="color: #34D399; font-size: 0.95rem;">{curr}{item["target_1"]:,.2f}</b><br><span style="font-size: 0.72rem; color: #10B981;">Est Gain: {curr}{item["max_gain_t1_lot"]:,.0f}/lot</span></div>'
+                f'<div><span style="color: #60A5FA; font-size: 0.72rem;">TARGET 2 (RUNNER)</span><br><b style="color: #60A5FA; font-size: 0.95rem;">{curr}{item["target_2"]:,.2f}</b><br><span style="font-size: 0.72rem; color: #3B82F6;">Est Gain: {curr}{item["max_gain_t2_lot"]:,.0f}/lot</span></div>'
                 f'</div>'
                 f'<div style="margin-top: 10px;">'
                 f'<div style="color: #CBD5E1; font-size: 0.78rem; font-weight: 700; text-transform: uppercase; margin-bottom: 4px;">🛡️ Why this setup is least likely to fail:</div>'
@@ -3408,7 +3413,7 @@ elif run_btn or "cached_results" in st.session_state:
                         default_seg = "OPTIONS"
                     elif "SPREAD" in raw_cat:
                         default_seg = "MULTI_LEG"
-                    elif UniverseManager.is_commodity(sym) or "FUT" in raw_cat:
+                    elif UniverseManager.is_commodity(sym) or UniverseManager.is_global_commodity(sym) or "FUT" in raw_cat:
                         default_seg = "FUTURES"
                     else:
                         default_seg = "EQUITY"
@@ -3600,20 +3605,10 @@ elif run_btn or "cached_results" in st.session_state:
 
                             # Commodity contract unit badge
                             sym = p.get("symbol", "")
+                            curr = UniverseManager.get_commodity_currency(sym)
                             unit_badge = ""
-                            if UniverseManager.is_commodity(sym):
-                                comm_map = {
-                                    "GOLDM": "MCX Gold Mini (₹ / 10g)",
-                                    "SILVERM": "MCX Silver Mini (₹ / kg)",
-                                    "GOLD": "MCX Futures (₹ / 10g)",
-                                    "SILVER": "MCX Futures (₹ / kg)",
-                                    "CRUDEOIL": "MCX Futures (₹ / bbl)",
-                                    "NATURALGAS": "MCX Futures (₹ / mmBtu)",
-                                    "COPPER": "MCX Futures (₹ / kg)",
-                                    "ZINC": "MCX Futures (₹ / kg)",
-                                    "ALUMINIUM": "MCX Futures (₹ / kg)",
-                                }
-                                unit_badge = f' | Contract: <b style="color: #FFD54F;">{comm_map.get(sym, UniverseManager.get_commodity_unit(sym))}</b>'
+                            if UniverseManager.is_commodity(sym) or UniverseManager.is_global_commodity(sym):
+                                unit_badge = f' | Contract: <b style="color: #FFD54F;">{UniverseManager.get_commodity_unit(sym)}</b>'
 
                             macro_b = p.get("macro_badge", "")
                             macro_badge_html = f' | <b style="color: #64B5F6;">{macro_b}</b>' if macro_b else ''
@@ -3745,7 +3740,7 @@ elif run_btn or "cached_results" in st.session_state:
                                 f'<div style="display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap;">'
                                 f'<h3 style="margin: 0; color: #FFF; font-size: 1.35rem; font-weight: 700;">{sym}</h3>'
                                 f'<span style="font-size: 1.02rem; color: #CBD5E1; font-weight: 600;">'
-                                f'LTP: <b style="color: #FFF; font-size: 1.15rem;">₹{ltp_val:,.2f}</b> '
+                                f'LTP: <b style="color: #FFF; font-size: 1.15rem;">{curr}{ltp_val:,.2f}</b> '
                                 f'(<b style="color: {chg_color}; font-size: 0.92rem;">{chg_sign}{chg_val:.2f}%</b>)'
                                 f'</span>'
                                 f'</div>'
@@ -3762,16 +3757,16 @@ elif run_btn or "cached_results" in st.session_state:
                                 f'{status_banner}'
                                 f'{macro_impact_banner}'
                                 f'<div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; background-color: #0e1117; padding: 12px; border-radius: 6px; margin: 10px 0 6px 0;">'
-                                f'<div><span style="color: #888; font-size: 0.75rem;">Entry Trigger</span><br><b style="color: #FFF; font-size: 1.05rem;">₹{p.get("entry_price")}</b></div>'
-                                f'<div><span style="color: #888; font-size: 0.75rem;">{sl_lbl}</span><br><b style="color: #FF5252; font-size: 1.05rem;">₹{p.get("tight_stop_loss", p.get("stop_loss"))}</b><br><span style="font-size: 0.7rem; color: #A0AEC0;">Swing Floor: ₹{p.get("conservative_stop_loss", p.get("stop_loss"))}</span></div>'
-                                f'<div><span style="color: #888; font-size: 0.75rem;">{t1_lbl}</span><br><b style="color: #00E676; font-size: 1.05rem;">₹{p.get("target_1")}</b></div>'
-                                f'<div><span style="color: #888; font-size: 0.75rem;">{t2_lbl}</span><br><b style="color: #00E676; font-size: 1.05rem;">₹{p.get("target_2")}</b></div>'
+                                f'<div><span style="color: #888; font-size: 0.75rem;">Entry Trigger</span><br><b style="color: #FFF; font-size: 1.05rem;">{curr}{p.get("entry_price")}</b></div>'
+                                f'<div><span style="color: #888; font-size: 0.75rem;">{sl_lbl}</span><br><b style="color: #FF5252; font-size: 1.05rem;">{curr}{p.get("tight_stop_loss", p.get("stop_loss"))}</b><br><span style="font-size: 0.7rem; color: #A0AEC0;">Swing Floor: {curr}{p.get("conservative_stop_loss", p.get("stop_loss"))}</span></div>'
+                                f'<div><span style="color: #888; font-size: 0.75rem;">{t1_lbl}</span><br><b style="color: #00E676; font-size: 1.05rem;">{curr}{p.get("target_1")}</b></div>'
+                                f'<div><span style="color: #888; font-size: 0.75rem;">{t2_lbl}</span><br><b style="color: #00E676; font-size: 1.05rem;">{curr}{p.get("target_2")}</b></div>'
                                 f'</div>'
                                 f'<div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; background-color: #12161f; padding: 8px 12px; border-radius: 6px; margin-bottom: 8px;">'
-                                f'<div><span style="color: #888; font-size: 0.75rem;">{t3_lbl}</span><br><b style="color: #64B5F6; font-size: 0.95rem;">₹{p.get("target_3", p.get("target_2"))}</b></div>'
-                                f'<div><span style="color: #888; font-size: 0.75rem;">{t4_lbl}</span><br><b style="color: #BA68C8; font-size: 0.95rem;">₹{p.get("target_4", p.get("target_2"))}</b></div>'
+                                f'<div><span style="color: #888; font-size: 0.75rem;">{t3_lbl}</span><br><b style="color: #64B5F6; font-size: 0.95rem;">{curr}{p.get("target_3", p.get("target_2"))}</b></div>'
+                                f'<div><span style="color: #888; font-size: 0.75rem;">{t4_lbl}</span><br><b style="color: #BA68C8; font-size: 0.95rem;">{curr}{p.get("target_4", p.get("target_2"))}</b></div>'
                                 f'<div><span style="color: #888; font-size: 0.75rem;">R:R Ratio</span><br><b style="color: #FFD54F; font-size: 0.85rem;">{p.get("risk_reward_ratio")}</b></div>'
-                                f'<div><span style="color: #888; font-size: 0.75rem;">Position Sizing</span><br><b style="color: #FFF; font-size: 0.85rem;">{p.get("shares_for_2k_risk", "—")} sh (₹2k risk)</b></div>'
+                                f'<div><span style="color: #888; font-size: 0.75rem;">Position Sizing</span><br><b style="color: #FFF; font-size: 0.85rem;">{p.get("shares_for_2k_risk", "—")} sh ({curr}2k risk)</b></div>'
                                 f'</div>'
                                 f'{trailing_badge}'
                                 f'<div style="margin: 8px 0 0 0; color: #E0E0E0; font-size: 0.88rem; line-height: 1.45;"><i>&ldquo;{thesis_clean}&rdquo;</i></div>'
@@ -3784,7 +3779,7 @@ elif run_btn or "cached_results" in st.session_state:
                             with st.expander(f"📌 Track {p.get('symbol')} in My Item Tracker"):
                                 with st.form(f"{tab_prefix}_tr_form_{idx}_{p.get('symbol')}", clear_on_submit=False):
                                     tr_c1, tr_c2 = st.columns(2)
-                                    tr_buy = tr_c1.number_input("Entry Price (₹)", value=float(p.get("entry_price", 100.0)), key=f"{tab_prefix}_tr_buy_{idx}_{p.get('symbol')}")
+                                    tr_buy = tr_c1.number_input(f"Entry Price ({curr})", value=float(p.get("entry_price", 100.0)), key=f"{tab_prefix}_tr_buy_{idx}_{p.get('symbol')}")
                                     default_qty = 50.0
                                     sz = str(p.get("shares_for_2k_risk", ""))
                                     if sz.isdigit():
@@ -3796,10 +3791,10 @@ elif run_btn or "cached_results" in st.session_state:
                                     def_type_idx = 0
                                     if "OPTION" in raw_cat or "PE" in action or "CE" in action:
                                         def_type_idx = 2 if "PE" in action else 1
-                                    elif UniverseManager.is_commodity(p.get("symbol", "")):
+                                    elif UniverseManager.is_commodity(p.get("symbol", "")) or UniverseManager.is_global_commodity(p.get("symbol", "")):
                                         def_type_idx = 4
                                     tr_type = tr_c3.selectbox("Asset Type", ["EQUITY", "OPTION_CE", "OPTION_PE", "FUTURES", "COMMODITY", "INDEX"], index=def_type_idx, key=f"{tab_prefix}_tr_type_{idx}_{p.get('symbol')}")
-                                    tr_sl = tr_c4.number_input("Stop Loss (₹)", value=float(p.get("tight_stop_loss", p.get("stop_loss", tr_buy * 0.95))), key=f"{tab_prefix}_tr_sl_{idx}_{p.get('symbol')}")
+                                    tr_sl = tr_c4.number_input(f"Stop Loss ({curr})", value=float(p.get("tight_stop_loss", p.get("stop_loss", tr_buy * 0.95))), key=f"{tab_prefix}_tr_sl_{idx}_{p.get('symbol')}")
                                     
                                     tr_tgt = float(p.get("target_1", tr_buy * 1.10))
                                     tr_notes = f"{p.get('category')} setup - {p.get('thesis', '')[:80]}"
@@ -4029,7 +4024,7 @@ elif run_btn or "cached_results" in st.session_state:
                                         act_icon = "🟢 BUY"
 
                                     comm_unit = ""
-                                    if UniverseManager.is_commodity(sym_p):
+                                    if UniverseManager.is_commodity(sym_p) or UniverseManager.is_global_commodity(sym_p):
                                         comm_unit = f" ({UniverseManager.get_commodity_unit(sym_p)})"
 
                                     bm = p.get("backtest_metrics", {})
@@ -4188,7 +4183,7 @@ elif run_btn or "cached_results" in st.session_state:
                                         act_icon = "🟢 BUY"
 
                                     comm_unit = ""
-                                    if UniverseManager.is_commodity(sym_p):
+                                    if UniverseManager.is_commodity(sym_p) or UniverseManager.is_global_commodity(sym_p):
                                         comm_unit = f" ({UniverseManager.get_commodity_unit(sym_p)})"
 
                                     c_factors_str = " • ".join(_get_confirmation_factors(p)[:2])
@@ -4379,7 +4374,7 @@ elif run_btn or "cached_results" in st.session_state:
                                     act_icon = "🟢 BUY"
 
                                 comm_unit = ""
-                                if UniverseManager.is_commodity(sym_p):
+                                if UniverseManager.is_commodity(sym_p) or UniverseManager.is_global_commodity(sym_p):
                                     comm_unit = f" ({UniverseManager.get_commodity_unit(sym_p)})"
 
                                 table_rows.append({
@@ -4488,19 +4483,8 @@ elif run_btn or "cached_results" in st.session_state:
 
                     comm_unit = ""
                     sym_c = c.get("symbol", "")
-                    if UniverseManager.is_commodity(sym_c):
-                        comm_unit_map = {
-                            "GOLDM": " (₹/10g Mini)",
-                            "SILVERM": " (₹/kg Mini)",
-                            "GOLD": " (₹/10g)",
-                            "SILVER": " (₹/kg)",
-                            "CRUDEOIL": " (₹/bbl)",
-                            "NATURALGAS": " (₹/mmBtu)",
-                            "COPPER": " (₹/kg)",
-                            "ZINC": " (₹/kg)",
-                            "ALUMINIUM": " (₹/kg)",
-                        }
-                        comm_unit = comm_unit_map.get(sym_c, f" ({UniverseManager.get_commodity_unit(sym_c)})")
+                    if UniverseManager.is_commodity(sym_c) or UniverseManager.is_global_commodity(sym_c):
+                        comm_unit = f" ({UniverseManager.get_commodity_unit(sym_c)})"
 
                     close_v = c.get("close", 0.0)
                     row = {
@@ -4557,19 +4541,8 @@ elif run_btn or "cached_results" in st.session_state:
                 df_chart = enrich_with_indicators(data_dict[selected_sym].tail(120).copy())
 
                 comm_chart_tag = ""
-                if UniverseManager.is_commodity(selected_sym):
-                    comm_chart_map = {
-                        "GOLDM": " (MCX Gold Mini ₹ / 10g)",
-                        "SILVERM": " (MCX Silver Mini ₹ / kg)",
-                        "GOLD": " (MCX ₹ / 10g)",
-                        "SILVER": " (MCX ₹ / kg)",
-                        "CRUDEOIL": " (MCX ₹ / bbl)",
-                        "NATURALGAS": " (MCX ₹ / mmBtu)",
-                        "COPPER": " (MCX ₹ / kg)",
-                        "ZINC": " (MCX ₹ / kg)",
-                        "ALUMINIUM": " (MCX ₹ / kg)",
-                    }
-                    comm_chart_tag = comm_chart_map.get(selected_sym, f" ({UniverseManager.get_commodity_unit(selected_sym)})")
+                if UniverseManager.is_commodity(selected_sym) or UniverseManager.is_global_commodity(selected_sym):
+                    comm_chart_tag = f" ({UniverseManager.get_commodity_unit(selected_sym)})"
 
                 fig = make_subplots(
                     rows=2, cols=1,
@@ -4903,10 +4876,10 @@ else:
             with hs_c1:
                 home_universe = st.selectbox(
                     "Select Asset Universe",
-                    ["NIFTY_50", "🏛️ INDICES (NIFTY, BankNifty, Sensex...)", "NSE_FO", "NIFTY_500", "MCX Commodities", "Custom"],
+                    ["NIFTY_50", "🏛️ INDICES (NIFTY, BankNifty, Sensex...)", "NSE_FO", "NIFTY_500", "🌐 Global Commodities (Gold, Silver, Crude, Copper...)", "MCX Commodities", "Custom"],
                     index=0,
                     key="home_univ_picker",
-                    help="NIFTY_50: Top 50 bluechips. INDICES: Nifty, BankNifty, Sensex. NSE_FO: 180+ liquid F&O stocks. MCX Commodities: Gold, Silver, Crude, Gas."
+                    help="NIFTY_50: Top 50 bluechips. INDICES: Nifty, BankNifty, Sensex. NSE_FO: 180+ liquid F&O stocks. Global Commodities: Direct COMEX/NYMEX Gold, Silver, Crude, Copper ($). MCX Commodities: Gold, Silver, Crude, Gas (₹)."
                 )
             with hs_c2:
                 home_strat = st.selectbox(

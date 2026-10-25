@@ -8,6 +8,7 @@ import pandas as pd
 
 from core.indicators import enrich_with_indicators
 from core.relative_strength import MarketIntelAnalyzer
+from core.universe import UniverseManager
 from screeners.base_screener import BaseScreener
 
 
@@ -27,7 +28,10 @@ class IntradayScreener(BaseScreener):
 
         close = float(last['close'])
         volume = float(last['volume'])
-        if close < 20.0 or volume < 100000:
+        is_comm = UniverseManager.is_commodity(symbol) or UniverseManager.is_global_commodity(symbol)
+        min_vol = 50.0 if is_comm else 100000.0
+        min_price = 0.5 if is_comm else 20.0
+        if close < min_price or volume < min_vol:
             return None
 
         # 1. Day's Trading Range vs ATR

@@ -16,6 +16,7 @@ import yfinance as yf
 
 from core.options_analytics import BlackScholesEngine
 from core.indices import INDEX_SPECS
+from core.universe import UniverseManager
 
 
 @dataclass
@@ -94,6 +95,22 @@ class LocalHistoricalDataProvider(HistoricalDataProvider):
 
     def get_contract_specifications(self, instrument: str, as_of_date: Optional[str] = None) -> Dict[str, Any]:
         sym = instrument.upper().replace(".NS", "").replace("^", "")
+        if UniverseManager.is_global_commodity(sym):
+            return {
+                "symbol": sym,
+                "lot_size": 1,
+                "tick_size": 0.01,
+                "strike_step": 10.0,
+                "margin_pct": 0.10,
+            }
+        if UniverseManager.is_commodity(sym):
+            return {
+                "symbol": sym,
+                "lot_size": 1,
+                "tick_size": 1.0,
+                "strike_step": 100.0,
+                "margin_pct": 0.10,
+            }
         if sym in INDEX_SPECS:
             spec = INDEX_SPECS[sym]
             return {
@@ -203,6 +220,8 @@ class YahooHistoricalDataProvider(HistoricalDataProvider):
     @staticmethod
     def map_symbol_to_ticker(symbol: str) -> str:
         s = symbol.upper().strip()
+        if UniverseManager.is_global_commodity(s):
+            return UniverseManager.to_yfinance_symbol(s)
         if s == "NIFTY" or s == "NIFTY 50":
             return "^NSEI"
         elif s == "BANKNIFTY" or s == "BANK NIFTY":
@@ -213,12 +232,28 @@ class YahooHistoricalDataProvider(HistoricalDataProvider):
             return "NIFTY_FIN_SERVICE.NS"
         elif s == "INDIAVIX":
             return "^INDIAVIX"
-        elif not s.startswith("^") and not s.endswith(".NS") and not s.endswith(".BO"):
-            return f"{s}.NS"
+        elif not s.startswith("^") and not s.endswith(".NS") and not s.endswith(".BO") and "=" not in s:
+            return UniverseManager.to_yfinance_symbol(s)
         return s
 
     def get_contract_specifications(self, instrument: str, as_of_date: Optional[str] = None) -> Dict[str, Any]:
         sym = instrument.upper().replace(".NS", "").replace("^", "")
+        if UniverseManager.is_global_commodity(sym):
+            return {
+                "symbol": sym,
+                "lot_size": 1,
+                "tick_size": 0.01,
+                "strike_step": 10.0,
+                "margin_pct": 0.10,
+            }
+        if UniverseManager.is_commodity(sym):
+            return {
+                "symbol": sym,
+                "lot_size": 1,
+                "tick_size": 1.0,
+                "strike_step": 100.0,
+                "margin_pct": 0.10,
+            }
         if sym in INDEX_SPECS:
             spec = INDEX_SPECS[sym]
             return {
@@ -244,7 +279,7 @@ class YahooHistoricalDataProvider(HistoricalDataProvider):
         interval: str = "1d",
     ) -> Tuple[pd.DataFrame, DataQualityReport]:
         ticker = self.map_symbol_to_ticker(instrument)
-        clean_ticker = ticker.replace("^", "").replace(".NS", "")
+        clean_ticker = ticker.replace("^", "").replace(".NS", "").replace(".BO", "").replace("=", "_")
         cache_file = self.cache_dir / f"{clean_ticker}_{interval}.parquet"
 
         df = pd.DataFrame()

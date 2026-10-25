@@ -11,6 +11,7 @@ import pandas as pd
 
 from core.indicators import enrich_with_indicators
 from core.relative_strength import MarketIntelAnalyzer
+from core.universe import UniverseManager
 from screeners.base_screener import BaseScreener
 
 
@@ -33,7 +34,10 @@ class SwingScreener(BaseScreener):
         high = float(last['high'])
         low = float(last['low'])
         volume = float(last['volume'])
-        if close < 15.0 or volume < 25000:
+        is_comm = UniverseManager.is_commodity(symbol) or UniverseManager.is_global_commodity(symbol)
+        min_vol = 50.0 if is_comm else 25000.0
+        min_price = 0.5 if is_comm else 15.0
+        if close < min_price or volume < min_vol:
             return None
 
         ema20 = float(last.get('ema_20', 0))

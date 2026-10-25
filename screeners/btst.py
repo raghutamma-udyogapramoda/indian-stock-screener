@@ -8,6 +8,7 @@ import pandas as pd
 
 from core.indicators import enrich_with_indicators
 from core.relative_strength import MarketIntelAnalyzer
+from core.universe import UniverseManager
 from screeners.base_screener import BaseScreener
 
 
@@ -27,7 +28,10 @@ class BTSTScreener(BaseScreener):
 
         close = float(last['close'])
         volume = float(last['volume'])
-        if close < 15.0 or volume < 50000:
+        is_comm = UniverseManager.is_commodity(symbol) or UniverseManager.is_global_commodity(symbol)
+        min_vol = 50.0 if is_comm else 50000.0
+        min_price = 0.5 if is_comm else 15.0
+        if close < min_price or volume < min_vol:
             return None
 
         # 1. Close Location Value (CLV)

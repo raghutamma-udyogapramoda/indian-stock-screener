@@ -100,7 +100,7 @@ class PortfolioTracker:
                 day_low = getattr(fi, "day_low", None) or price
 
                 # Authoritative MCX Commodity INR adjustment
-                if UniverseManager.is_commodity(clean) and price is not None:
+                if UniverseManager.is_commodity(clean) and not UniverseManager.is_global_commodity(clean) and price is not None:
                     mult = UniverseManager.get_mcx_conversion_multiplier(clean, float(price))
                     if abs(mult - 1.0) > 1e-4:
                         price = round(float(price) * mult, 2)
@@ -164,7 +164,7 @@ class PortfolioTracker:
 
         # Auto-detect asset type if default EQUITY was provided
         if asset_type == "EQUITY":
-            if UniverseManager.is_commodity(underlying):
+            if UniverseManager.is_commodity(underlying) or UniverseManager.is_global_commodity(underlying):
                 asset_type = "COMMODITY"
             elif UniverseManager.is_index(underlying):
                 asset_type = "INDEX"
@@ -451,5 +451,6 @@ class PortfolioTracker:
             "day_high": live_quote.get("day_high", current_price) if live_quote else current_price,
             "day_low": live_quote.get("day_low", current_price) if live_quote else current_price,
             "last_checked_time": live_quote.get("timestamp", datetime.now().strftime("%I:%M:%S %p")) if live_quote else datetime.now().strftime("%I:%M:%S %p"),
-            "commodity_unit": UniverseManager.get_commodity_unit(sym) if UniverseManager.is_commodity(sym) else "",
+            "commodity_unit": UniverseManager.get_commodity_unit(sym) if (UniverseManager.is_commodity(sym) or UniverseManager.is_global_commodity(sym)) else "",
+            "currency": UniverseManager.get_commodity_currency(sym),
         }

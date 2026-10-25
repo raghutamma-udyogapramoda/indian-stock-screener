@@ -67,10 +67,39 @@ MCX_COMMODITIES_SEED = [
     "GOLDM", "SILVERM", "CRUDEOIL", "NATURALGAS", "COPPER", "ZINC", "ALUMINIUM", "GOLD", "SILVER"
 ]
 
+# Major Global International Commodity Symbols (COMEX, NYMEX, ICE, LME)
+GLOBAL_COMMODITIES_SEED = [
+    "GOLD_GLOBAL", "SILVER_GLOBAL", "CRUDE_WTI", "BRENT_CRUDE",
+    "COPPER_GLOBAL", "NATGAS_GLOBAL", "PLATINUM_GLOBAL", "PALLADIUM_GLOBAL"
+]
+
 # Major Indian Market & Sectoral Indices
 INDICES_SEED = [
     "NIFTY", "BANKNIFTY", "SENSEX", "FINNIFTY", "MIDCPNIFTY", "NIFTYIT", "INDIAVIX"
 ]
+
+# Mapping Global commodities to Yahoo Finance futures tickers
+GLOBAL_COMMODITY_TO_YFINANCE = {
+    "GOLD_GLOBAL": "GC=F",
+    "SILVER_GLOBAL": "SI=F",
+    "CRUDE_WTI": "CL=F",
+    "BRENT_CRUDE": "BZ=F",
+    "COPPER_GLOBAL": "HG=F",
+    "NATGAS_GLOBAL": "NG=F",
+    "PLATINUM_GLOBAL": "PL=F",
+    "PALLADIUM_GLOBAL": "PA=F",
+}
+
+YFINANCE_TO_GLOBAL_COMMODITY = {
+    "GC=F": "GOLD_GLOBAL",
+    "SI=F": "SILVER_GLOBAL",
+    "CL=F": "CRUDE_WTI",
+    "BZ=F": "BRENT_CRUDE",
+    "HG=F": "COPPER_GLOBAL",
+    "NG=F": "NATGAS_GLOBAL",
+    "PL=F": "PLATINUM_GLOBAL",
+    "PA=F": "PALLADIUM_GLOBAL",
+}
 
 # Mapping MCX commodity symbols to Yahoo Finance futures / ETF tickers for fallback
 MCX_TO_YFINANCE = {
@@ -303,6 +332,15 @@ STOCK_COMPANY_NAMES = {
     "COPPER": "MCX Copper (2500 kg)",
     "ZINC": "MCX Zinc (5000 kg)",
     "ALUMINIUM": "MCX Aluminium (5000 kg)",
+    # Global Commodities
+    "GOLD_GLOBAL": "COMEX Gold Futures (USD / Troy Oz)",
+    "SILVER_GLOBAL": "COMEX Silver Futures (USD / Troy Oz)",
+    "CRUDE_WTI": "NYMEX WTI Light Sweet Crude (USD / bbl)",
+    "BRENT_CRUDE": "ICE Brent Crude Oil (USD / bbl)",
+    "COPPER_GLOBAL": "COMEX High Grade Copper (USD / lb)",
+    "NATGAS_GLOBAL": "NYMEX Henry Hub Natural Gas (USD / mmBtu)",
+    "PLATINUM_GLOBAL": "NYMEX Platinum Futures (USD / Troy Oz)",
+    "PALLADIUM_GLOBAL": "NYMEX Palladium Futures (USD / Troy Oz)",
     # Indices
     "NIFTY": "NIFTY 50 Benchmark Index",
     "BANKNIFTY": "BANK NIFTY Banking Index",
@@ -353,6 +391,13 @@ class UniverseManager:
             pass
 
         try:
+            for s in cls._load_global_commodities():
+                if s:
+                    all_syms.add(s.strip().upper())
+        except Exception:
+            pass
+
+        try:
             for s in cls._load_indices():
                 if s:
                     all_syms.add(s.strip().upper())
@@ -396,6 +441,8 @@ class UniverseManager:
             return UniverseManager._load_fno()
         elif u_norm in ["MCX", "MCX_COMMODITIES", "COMMODITIES", "COMMODITY"]:
             return UniverseManager._load_mcx_commodities()
+        elif any(k in u_norm for k in ["GLOBAL_COMMODITIES", "GLOBAL_COMMODITY", "GLOBAL"]):
+            return UniverseManager._load_global_commodities()
         elif any(k in u_norm for k in ["INDICES", "INDEX", "MARKET_INDICES", "SECTORAL_INDICES"]):
             return UniverseManager._load_indices()
         else:
@@ -511,10 +558,48 @@ class UniverseManager:
         return MCX_COMMODITIES_SEED
 
     @staticmethod
+    def _load_global_commodities() -> List[str]:
+        """Loads major international global commodity symbols (COMEX, NYMEX, ICE, LME)."""
+        file_path = UNIVERSES_DIR / "global_commodities.txt"
+        if file_path.exists():
+            with open(file_path, "r", encoding="utf-8") as f:
+                symbols = [line.strip().upper() for line in f if line.strip() and not line.startswith("#")]
+                if len(symbols) >= 3:
+                    return symbols
+
+        with open(file_path, "w", encoding="utf-8") as f:
+            f.write("\n".join(GLOBAL_COMMODITIES_SEED))
+        return GLOBAL_COMMODITIES_SEED
+
+    @staticmethod
+    def is_global_commodity(symbol: str) -> bool:
+        """Checks if a symbol is an international/global commodity (COMEX/NYMEX/ICE/LME)."""
+        if not symbol:
+            return False
+        clean = UniverseManager.to_clean_symbol(symbol) if not symbol.endswith("=F") else symbol
+        return (
+            clean in GLOBAL_COMMODITIES_SEED
+            or clean in GLOBAL_COMMODITY_TO_YFINANCE
+            or symbol.upper() in GLOBAL_COMMODITY_TO_YFINANCE
+            or symbol.upper() in ["GC=F", "SI=F", "CL=F", "BZ=F", "HG=F", "NG=F", "PL=F", "PA=F"]
+        )
+
+    @staticmethod
     def is_commodity(symbol: str) -> bool:
         """Checks if a symbol is an MCX commodity or mapped commodity future."""
+        if not symbol:
+            return False
+        if UniverseManager.is_global_commodity(symbol):
+            return False
         clean = UniverseManager.to_clean_symbol(symbol)
         return clean in MCX_COMMODITIES_SEED or symbol.upper() in MCX_TO_YFINANCE or symbol.upper() in YFINANCE_TO_MCX
+
+    @staticmethod
+    def get_commodity_currency(symbol: str) -> str:
+        """Returns the native quotation currency symbol: '$' for global commodities, '₹' for Indian equities/MCX."""
+        if UniverseManager.is_global_commodity(symbol):
+            return "$"
+        return "₹"
 
     @staticmethod
     def is_index(symbol: str) -> bool:
@@ -530,7 +615,9 @@ class UniverseManager:
 
     @staticmethod
     def get_exchange(symbol: str) -> str:
-        """Returns the primary exchange for the asset ('MCX', 'BSE', or 'NSE')."""
+        """Returns the primary exchange for the asset ('GLOBAL', 'MCX', 'BSE', or 'NSE')."""
+        if UniverseManager.is_global_commodity(symbol):
+            return "GLOBAL"
         clean = UniverseManager.to_clean_symbol(symbol)
         if UniverseManager.is_commodity(symbol):
             return "MCX"
@@ -542,11 +629,14 @@ class UniverseManager:
     def to_yfinance_symbol(symbol: str, exchange: str = "NSE") -> str:
         """
         Converts symbol to Yahoo Finance ticker format.
-        Maps Indian indices (e.g. NIFTY -> ^NSEI, BANKNIFTY -> ^NSEBANK, SENSEX -> ^BSESN),
+        Maps global commodities (e.g. GOLD_GLOBAL -> GC=F, CRUDE_WTI -> CL=F),
+        Indian indices (e.g. NIFTY -> ^NSEI, BANKNIFTY -> ^NSEBANK, SENSEX -> ^BSESN),
         MCX commodities (e.g. GOLD -> GC=F, CRUDEOIL -> CL=F),
         and Indian equities (e.g. RELIANCE -> RELIANCE.NS).
         """
         clean = UniverseManager.to_clean_symbol(symbol)
+        if clean in GLOBAL_COMMODITY_TO_YFINANCE:
+            return GLOBAL_COMMODITY_TO_YFINANCE[clean]
         if clean in INDEX_TO_YFINANCE:
             return INDEX_TO_YFINANCE[clean]
         if clean in MCX_TO_YFINANCE:
@@ -562,6 +652,8 @@ class UniverseManager:
     def to_clean_symbol(symbol: str) -> str:
         """Strips exchange suffixes (.NS, .BO, =F, ^) and returns clean base code."""
         s = symbol.upper().strip()
+        if s in GLOBAL_COMMODITIES_SEED or s in GLOBAL_COMMODITY_TO_YFINANCE:
+            return s
         # Normalization for Gold Mini and Silver Mini variations
         s_norm = s.replace(" ", "").replace("-", "").replace("_", "")
         if s_norm in ["GOLDM", "GOLDMINI"]:
@@ -577,9 +669,10 @@ class UniverseManager:
 
     @staticmethod
     def get_commodity_unit(symbol: str) -> str:
-        """Returns standard official Multi Commodity Exchange of India (MCX) contract quotation unit."""
+        """Returns standard official Multi Commodity Exchange of India (MCX) or Global contract quotation unit."""
         clean = UniverseManager.to_clean_symbol(symbol)
         units = {
+            # Indian MCX Contracts
             "GOLDM": "₹ / 10g (Mini 100g Lot)",
             "SILVERM": "₹ / kg (Mini 5kg Lot)",
             "GOLD": "₹ / 10g (1kg Lot)",
@@ -589,8 +682,21 @@ class UniverseManager:
             "COPPER": "₹ / kg",
             "ZINC": "₹ / kg",
             "ALUMINIUM": "₹ / kg",
+            # Global International Contracts
+            "GOLD_GLOBAL": "$ / Troy Oz (COMEX)",
+            "SILVER_GLOBAL": "$ / Troy Oz (COMEX)",
+            "CRUDE_WTI": "$ / bbl (NYMEX WTI)",
+            "BRENT_CRUDE": "$ / bbl (ICE Brent)",
+            "COPPER_GLOBAL": "$ / lb (COMEX)",
+            "NATGAS_GLOBAL": "$ / mmBtu (NYMEX)",
+            "PLATINUM_GLOBAL": "$ / Troy Oz (NYMEX)",
+            "PALLADIUM_GLOBAL": "$ / Troy Oz (NYMEX)",
         }
-        return units.get(clean, "MCX")
+        if clean in units:
+            return units[clean]
+        if UniverseManager.is_global_commodity(symbol):
+            return "GLOBAL"
+        return "MCX"
 
     @staticmethod
     def get_usdinr_rate() -> float:
@@ -630,6 +736,8 @@ class UniverseManager:
           - ALUMINIUM (MCX: ₹ / kg): LME ALI=F ($/MT) / 1000 * USDINR (or $/lb * 2.20462 * USDINR)
         """
         clean = UniverseManager.to_clean_symbol(symbol)
+        if UniverseManager.is_global_commodity(symbol) or UniverseManager.is_global_commodity(clean):
+            return 1.0
         if not UniverseManager.is_commodity(clean) or raw_price is None or raw_price <= 0:
             return 1.0
 
@@ -702,6 +810,8 @@ class UniverseManager:
         Preserves 100% of candle shapes, volatility, technical indicator patterns, and wicks.
         """
         clean = UniverseManager.to_clean_symbol(symbol)
+        if UniverseManager.is_global_commodity(symbol) or UniverseManager.is_global_commodity(clean):
+            return df
         if not UniverseManager.is_commodity(clean) or df is None or df.empty:
             return df
 

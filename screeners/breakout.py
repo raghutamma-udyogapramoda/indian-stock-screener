@@ -30,9 +30,10 @@ class BreakoutScreener(BaseScreener):
         close = float(last['close'])
         volume = float(last['volume'])
         
-        is_comm = UniverseManager.is_commodity(symbol)
+        is_comm = UniverseManager.is_commodity(symbol) or UniverseManager.is_global_commodity(symbol)
         min_vol = 50.0 if is_comm else 20000.0
-        if close < 15.0 or volume < min_vol:
+        min_price = 0.5 if is_comm else 15.0
+        if close < min_price or volume < min_vol:
             return None
 
         # 1. 52-Week & Multi-Week Highs

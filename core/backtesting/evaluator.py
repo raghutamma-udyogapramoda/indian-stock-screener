@@ -93,7 +93,7 @@ def enrich_plans_with_backtest_evaluations(
             default_seg = "OPTIONS"
         elif "SPREAD" in raw_cat:
             default_seg = "MULTI_LEG"
-        elif UniverseManager.is_commodity(sym) or "FUT" in raw_cat:
+        elif UniverseManager.is_commodity(sym) or UniverseManager.is_global_commodity(sym) or "FUT" in raw_cat:
             default_seg = "FUTURES"
         else:
             default_seg = "EQUITY"

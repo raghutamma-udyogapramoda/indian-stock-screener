@@ -141,7 +141,7 @@ class YahooFinanceProvider(BaseDataProvider):
                     except Exception:
                         pass
 
-                if UniverseManager.is_commodity(clean_symbol):
+                if UniverseManager.is_commodity(clean_symbol) and not UniverseManager.is_global_commodity(clean_symbol):
                     cached_df = self._convert_to_mcx_inr(clean_symbol, cached_df)
 
                 now_str = datetime.now(ist_tz).strftime("%I:%M:%S %p IST")
@@ -178,7 +178,7 @@ class YahooFinanceProvider(BaseDataProvider):
                 pass
 
             # If symbol is an MCX commodity, convert international futures prices to Indian MCX terms (INR)
-            if UniverseManager.is_commodity(clean_symbol):
+            if UniverseManager.is_commodity(clean_symbol) and not UniverseManager.is_global_commodity(clean_symbol):
                 df = self._convert_to_mcx_inr(clean_symbol, df)
 
             now_str = datetime.now(ist_tz).strftime("%I:%M:%S %p IST")
@@ -265,7 +265,7 @@ class YahooFinanceProvider(BaseDataProvider):
                 day_high = v8_q.get("day_high")
                 day_low = v8_q.get("day_low")
 
-                if UniverseManager.is_commodity(clean) and last_price:
+                if UniverseManager.is_commodity(clean) and not UniverseManager.is_global_commodity(clean) and last_price:
                     mult = UniverseManager.get_mcx_conversion_multiplier(clean, float(last_price))
                     if abs(mult - 1.0) > 1e-4:
                         last_price = round(float(last_price) * mult, 2)
@@ -301,7 +301,7 @@ class YahooFinanceProvider(BaseDataProvider):
             fifty_two_high = getattr(fast_info, "year_high", None)
             fifty_two_low = getattr(fast_info, "year_low", None)
 
-            if UniverseManager.is_commodity(clean) and last_price:
+            if UniverseManager.is_commodity(clean) and not UniverseManager.is_global_commodity(clean) and last_price:
                 mult = UniverseManager.get_mcx_conversion_multiplier(clean, float(last_price))
                 if abs(mult - 1.0) > 1e-4:
                     last_price = round(float(last_price) * mult, 2)
