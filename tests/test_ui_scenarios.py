@@ -526,6 +526,123 @@ class TestStreamlitUIViews(unittest.TestCase):
         fut_bt_btns = [b for b in at.button if "Backtest Futures Strategy" in b.label]
         self.assertGreater(len(fut_bt_btns), 0, "Futures strategy backtest buttons should be rendered on qualified cards")
 
+    def test_scenario_11_backtest_passed_tab(self):
+        """Tests the Backtest Passed quantitative validation tab and scorecard."""
+        at = AppTest.from_file(self.app_path, default_timeout=35)
+        at.session_state["authenticated"] = True
+        at.session_state["username"] = "test_trader"
+        at.session_state["symbols"] = ["RELIANCE", "INFY"]
+        at.session_state["elapsed"] = 1.0
+        at.session_state["cached_results"] = {
+            "Breakout": [
+                {
+                    "symbol": "RELIANCE",
+                    "score": 92,
+                    "bias": "LONG",
+                    "close": 2500.0,
+                    "change_pct": 2.5,
+                    "rvol": 1.8,
+                    "reasons": ["High Conviction 52W Breakout"],
+                    "metrics": {"breakout_pivot": 2450.0},
+                }
+            ],
+            "Breakdown": [
+                {
+                    "symbol": "INFY",
+                    "score": 85,
+                    "bias": "SHORT",
+                    "close": 1400.0,
+                    "change_pct": -2.1,
+                    "rvol": 1.6,
+                    "reasons": ["Breakdown below support"],
+                    "metrics": {"breakdown_pivot": 1450.0},
+                }
+            ],
+        }
+        at.session_state["cached_ai_plans"] = [
+            {
+                "symbol": "RELIANCE",
+                "trade_action": "BUY",
+                "score": 92,
+                "conviction": "HIGH",
+                "close": 2500.0,
+                "cmp": 2500.0,
+                "entry_price": 2500.0,
+                "stop_loss": 2450.0,
+                "tight_stop_loss": 2450.0,
+                "target_1": 2600.0,
+                "target_2": 2700.0,
+                "rvol": 1.8,
+                "category": "Breakout",
+                "thesis": "High conviction breakout above pivot with rising institutional volumes.",
+                "backtest_passed": True,
+                "backtest_metrics": {
+                    "return_pct": 28.5,
+                    "win_rate_pct": 62.5,
+                    "profit_factor": 1.95,
+                    "max_drawdown_pct": 11.2,
+                    "total_trades": 16,
+                    "net_pnl": 57000.0,
+                    "total_costs": 3200.0,
+                    "strategy_id": "SUPERTREND_BREAKOUT",
+                    "strategy_label": "Supertrend Breakout",
+                    "segment": "EQUITY",
+                }
+            },
+            {
+                "symbol": "INFY",
+                "trade_action": "SELL",
+                "score": 85,
+                "conviction": "HIGH",
+                "close": 1400.0,
+                "cmp": 1400.0,
+                "entry_price": 1400.0,
+                "stop_loss": 1450.0,
+                "tight_stop_loss": 1450.0,
+                "target_1": 1300.0,
+                "target_2": 1250.0,
+                "rvol": 1.6,
+                "category": "Breakdown",
+                "thesis": "Distribution breakdown below key swing low with volume confirmation.",
+                "backtest_passed": False,
+                "backtest_metrics": {
+                    "return_pct": -8.5,
+                    "win_rate_pct": 33.3,
+                    "profit_factor": 0.75,
+                    "max_drawdown_pct": 22.0,
+                    "total_trades": 9,
+                    "net_pnl": -17000.0,
+                    "total_costs": 1800.0,
+                    "strategy_id": "EMA_CROSSOVER",
+                    "strategy_label": "EMA Crossover",
+                    "segment": "EQUITY",
+                }
+            }
+        ]
+        at.session_state["data_dict"] = {
+            "RELIANCE": pd.DataFrame({
+                "open": [2450.0] * 35, "high": [2510.0] * 35, "low": [2440.0] * 35, "close": [2500.0] * 35, "volume": [1000000] * 35
+            }, index=pd.date_range("2023-01-01", periods=35, freq="D")),
+            "INFY": pd.DataFrame({
+                "open": [1450.0] * 35, "high": [1460.0] * 35, "low": [1390.0] * 35, "close": [1400.0] * 35, "volume": [800000] * 35
+            }, index=pd.date_range("2023-01-01", periods=35, freq="D")),
+        }
+        at.session_state["data_health"] = {
+            "is_latest": True, "provider_name": "Exchange", "latest_data_date": "2023-02-05", "refresh_timestamp": "09:15"
+        }
+
+        at.run()
+        self.assertEqual(len(at.exception), 0, f"App crashed displaying Backtest Passed tab: {at.exception}")
+
+        # Check for Backtest Passed header
+        raw_markdown = " ".join([m.value for m in at.markdown])
+        self.assertIn("Backtest Passed", raw_markdown)
+
+        # Check that quantitative hurdle filter controls exist
+        select_labels = [s.label for s in at.selectbox]
+        self.assertIn("Sort Backtested Setups:", select_labels)
+        self.assertIn("Strategy Category:", select_labels)
+
 
 if __name__ == "__main__":
     unittest.main()

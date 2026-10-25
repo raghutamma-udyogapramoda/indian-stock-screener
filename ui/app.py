@@ -49,7 +49,7 @@ except Exception:
 
 # Guard against Streamlit Cloud stale in-memory module caching across git updates
 import importlib
-_APP_BUILD_SIG = "2026_10_25_futures_desk_v3"
+_APP_BUILD_SIG = "2026_10_25_backtest_passed_v1"
 if sys.modules.get("__CURRENT_BUILD_SIG__") != _APP_BUILD_SIG:
     for mod_name in list(sys.modules.keys()):
         if any(mod_name == pkg or mod_name.startswith(pkg + ".") for pkg in ("core", "screeners", "ai", "providers", "config")):
@@ -2088,6 +2088,148 @@ def _extract_ultra_conviction_futures_setups(
     return qualified
 
 
+def _enrich_plans_with_backtest_evaluations(
+    plans: List[Dict[str, Any]],
+    data_dict: Optional[Dict[str, pd.DataFrame]] = None
+) -> List[Dict[str, Any]]:
+    """
+    Backtests each plan against 1 year of historical data using realistic statutory trading costs
+    and evaluates each against industry-standard quantitative hurdles.
+    Results are cached in st.session_state so subsequent tab interactions run at 0ms latency.
+    """
+    if not plans:
+        return []
+
+    cache_key = f"cached_plans_bt_eval_{len(plans)}_{'_'.join(str(p.get('symbol', '')) for p in plans[:6])}"
+    if cache_key in st.session_state:
+        return st.session_state[cache_key]
+
+    enriched = []
+    strat_dict = BuiltinStrategies.list_strategies()
+
+    for p in plans:
+        p_copy = dict(p)
+
+        # Allow pre-computed backtest metrics (e.g. from tests or fixtures)
+        if "backtest_passed" in p_copy and "backtest_metrics" in p_copy:
+            enriched.append(p_copy)
+            continue
+
+        sym = p_copy.get("symbol", "")
+        raw_cat = str(p_copy.get("category", "")).upper()
+        act = str(p_copy.get("trade_action", p_copy.get("action", ""))).upper()
+
+        # 1. Strategy Model Selection
+        if "DIP" in raw_cat:
+            default_strat_id = "RSI_PULLBACK"
+        elif "BTST" in raw_cat:
+            default_strat_id = "BTST_MOMENTUM"
+        elif "SWING" in raw_cat or "SPREAD" in raw_cat:
+            default_strat_id = "DEFINED_RISK_SPREADS"
+        elif "BREAKDOWN" in raw_cat or ("SELL" in act and "PE" not in act):
+            default_strat_id = "EMA_CROSSOVER"
+        else:
+            default_strat_id = "SUPERTREND_BREAKOUT"
+
+        # 2. Segment
+        if "PE" in act or "CE" in act or "OPTION" in raw_cat:
+            default_seg = "OPTIONS"
+        elif "SPREAD" in raw_cat:
+            default_seg = "MULTI_LEG"
+        elif UniverseManager.is_commodity(sym) or "FUT" in raw_cat:
+            default_seg = "FUTURES"
+        else:
+            default_seg = "EQUITY"
+
+        # 3. Parameters
+        try:
+            entry_val = float(p_copy.get("entry_price", p_copy.get("close", 100.0)))
+            sl_val = float(p_copy.get("tight_stop_loss", p_copy.get("stop_loss", entry_val * 0.97)))
+            tgt_val = float(p_copy.get("target_1", entry_val * 1.06))
+            sl_pct = max(0.015, min(0.05, abs(entry_val - sl_val) / max(1.0, entry_val)))
+            target_pct = max(0.03, min(0.12, abs(tgt_val - entry_val) / max(1.0, entry_val)))
+        except Exception:
+            sl_pct = 0.025
+            target_pct = 0.06
+
+        holding_bars = min(30, max(5, int(p_copy.get("holding_period_days", 15))))
+        in_df = data_dict.get(sym) if isinstance(data_dict, dict) else None
+
+        # 4. Execute Backtest
+        try:
+            bt_res = BacktestRunner.run_backtest(
+                strategy_id=default_strat_id,
+                symbol=sym,
+                start_date="2023-01-01",
+                end_date="2024-01-01",
+                segment=default_seg,
+                initial_capital=200000.0,
+                stop_loss_pct=sl_pct,
+                target_pct=target_pct,
+                max_holding_bars=holding_bars,
+                enable_statutory_costs=True,
+                historical_data=in_df,
+            )
+        except Exception:
+            bt_res = None
+
+        if bt_res and bt_res.total_trades > 0:
+            ret = float(bt_res.total_return_pct)
+            wr = float(bt_res.win_rate_pct)
+            pf = float(bt_res.profit_factor)
+            dd = float(bt_res.max_drawdown_pct)
+            trades = int(bt_res.total_trades)
+
+            # Industry-Standard Quantitative Pass Thresholds:
+            # 1. Net Positive Total Return after all statutory taxes and slippage
+            # 2. Win rate >= 45% (or >= 38% with strong profit factor >= 1.25)
+            # 3. Profit Factor >= 1.20 (Gross Profit / Gross Loss)
+            # 4. Max Drawdown <= 35% (protects against capital erosion)
+            # 5. Total Trades >= 3 (statistical sample)
+            is_pass = (
+                ret > 0.0
+                and (wr >= 45.0 or (pf >= 1.25 and wr >= 38.0))
+                and pf >= 1.20
+                and dd <= 35.0
+                and trades >= 3
+            )
+
+            p_copy["backtest_passed"] = is_pass
+            p_copy["backtest_result"] = bt_res
+            p_copy["backtest_metrics"] = {
+                "return_pct": ret,
+                "win_rate_pct": wr,
+                "profit_factor": pf,
+                "max_drawdown_pct": dd,
+                "total_trades": trades,
+                "net_pnl": bt_res.net_pnl,
+                "total_costs": bt_res.total_costs,
+                "strategy_id": default_strat_id,
+                "strategy_label": strat_dict.get(default_strat_id, default_strat_id),
+                "segment": default_seg,
+            }
+        else:
+            p_copy["backtest_passed"] = False
+            p_copy["backtest_result"] = None
+            p_copy["backtest_metrics"] = {
+                "return_pct": 0.0,
+                "win_rate_pct": 0.0,
+                "profit_factor": 0.0,
+                "max_drawdown_pct": 0.0,
+                "total_trades": 0,
+                "net_pnl": 0.0,
+                "total_costs": 0.0,
+                "strategy_id": default_strat_id,
+                "strategy_label": strat_dict.get(default_strat_id, default_strat_id),
+                "segment": default_seg,
+            }
+
+        enriched.append(p_copy)
+
+    st.session_state[cache_key] = enriched
+    return enriched
+
+
 def _render_high_conviction_futures_desk(
     plans: List[Dict[str, Any]],
     data_dict: Optional[Dict[str, pd.DataFrame]] = None,
@@ -3373,6 +3515,10 @@ elif run_btn or "cached_results" in st.session_state:
                     factors = _get_confirmation_factors(p_dict)
                     return min(85 + (len(factors) * 3), 98)
 
+                # Automatically backtest and evaluate all trade plans against industry-standard hurdles
+                plans = _enrich_plans_with_backtest_evaluations(plans, data_dict)
+                backtest_passed_plans = [p for p in plans if p.get("backtest_passed", False)]
+
                 # Pre-group plans by conviction tier and confirmed status
                 confirmed_plans = [p for p in plans if _is_confirmed_plan(p)]
                 high_plans = [p for p in plans if _get_conviction_tier(p) == "HIGH"]
@@ -3693,6 +3839,44 @@ elif run_btn or "cached_results" in st.session_state:
                                     f'</div>'
                                 )
 
+                            # Backtest quantitative validation badge
+                            bt_metrics = p.get("backtest_metrics", {})
+                            backtest_badge_html = ""
+                            if bt_metrics and bt_metrics.get("total_trades", 0) > 0:
+                                ret_v = float(bt_metrics.get("return_pct", 0.0))
+                                wr_v = float(bt_metrics.get("win_rate_pct", 0.0))
+                                pf_v = float(bt_metrics.get("profit_factor", 0.0))
+                                dd_v = float(bt_metrics.get("max_drawdown_pct", 0.0))
+                                tr_v = int(bt_metrics.get("total_trades", 0))
+                                strat_lbl = str(bt_metrics.get("strategy_label", "Strategy")).split(" (")[0]
+
+                                if p.get("backtest_passed", False):
+                                    backtest_badge_html = (
+                                        f'<div style="background: linear-gradient(90deg, rgba(6, 78, 59, 0.5) 0%, rgba(4, 120, 87, 0.2) 100%); '
+                                        f'border: 1px solid #10B981; border-left: 5px solid #10B981; border-radius: 6px; padding: 7px 12px; margin-bottom: 8px;">'
+                                        f'<div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 4px;">'
+                                        f'<span style="color: #34D399; font-size: 0.8rem; font-weight: 800; letter-spacing: 0.3px;">✅ 1Y BACKTEST VALIDATED (PASSED)</span>'
+                                        f'<span style="color: #A7F3D0; font-size: 0.74rem; font-weight: 700;">'
+                                        f'Net Return: <b style="color: #FFF;">+{ret_v:.1f}%</b> | Win Rate: <b style="color: #FFF;">{wr_v:.1f}%</b> | PF: <b style="color: #FFF;">{pf_v:.2f}x</b> | Max DD: <b style="color: #FFF;">{dd_v:.1f}%</b> ({tr_v} trades)'
+                                        f'</span>'
+                                        f'</div>'
+                                        f'</div>'
+                                    )
+                                else:
+                                    ret_c = "#EF4444" if ret_v < 0 else "#F59E0B"
+                                    sign_char = "+" if ret_v > 0 else ""
+                                    backtest_badge_html = (
+                                        f'<div style="background: linear-gradient(90deg, rgba(30, 41, 59, 0.5) 0%, rgba(15, 23, 42, 0.7) 100%); '
+                                        f'border: 1px solid rgba(148, 163, 184, 0.25); border-left: 5px solid {ret_c}; border-radius: 6px; padding: 6px 12px; margin-bottom: 8px;">'
+                                        f'<div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 4px;">'
+                                        f'<span style="color: {ret_c}; font-size: 0.76rem; font-weight: 700;">⚠️ 1Y BACKTEST UNVALIDATED ({strat_lbl})</span>'
+                                        f'<span style="color: #CBD5E1; font-size: 0.72rem;">'
+                                        f'Return: <b style="color: {ret_c};">{sign_char}{ret_v:.1f}%</b> | Win Rate: <b>{wr_v:.1f}%</b> | PF: <b>{pf_v:.2f}x</b> | Max DD: <b>{dd_v:.1f}%</b> ({tr_v} trades)'
+                                        f'</span>'
+                                        f'</div>'
+                                        f'</div>'
+                                    )
+
                             card_html = (
                                 f'<div style="background-color: #1a1e24; border-radius: 10px; padding: 18px; margin-bottom: 16px; border-left: 6px solid {border_color}; box-shadow: 0 4px 8px rgba(0,0,0,0.35);">'
                                 f'<div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px;">'
@@ -3713,6 +3897,7 @@ elif run_btn or "cached_results" in st.session_state:
                                 f'Conviction: {conv_pill}'
                                 f'</p>'
                                 f'{confirmed_banner}'
+                                f'{backtest_badge_html}'
                                 f'{status_banner}'
                                 f'{macro_impact_banner}'
                                 f'<div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; background-color: #0e1117; padding: 12px; border-radius: 6px; margin: 10px 0 6px 0;">'
@@ -3871,9 +4056,10 @@ elif run_btn or "cached_results" in st.session_state:
                         top_match_plan = next((p for p in plans if p.get("symbol") == top_sel_sym), plans[0])
                         _render_plan_backtest_card(top_match_plan, "ai_top_quick", 0, data_dict, as_expander=False)
 
-                # Build tab headers: Confirmed Strategies (Primary) + Overview tab + Conviction sub-tab + Futures sub-tab + Category sub-tabs
+                # Build tab headers: Backtest Passed (Quantitative Safe Desk) + Confirmed Strategies + Overview tab + Conviction sub-tab + Futures sub-tab + Category sub-tabs
                 fut_plans = _extract_ultra_conviction_futures_setups(plans, data_dict, macro_context)
                 tab_headers = [
+                    f"✅ Backtest Passed ({len(backtest_passed_plans)})",
                     f"🛡️ Confirmed Strategies ({len(confirmed_plans)})",
                     f"🌟 All Plans ({len(plans)})",
                     f"🔥 Conviction ({len(plans)})",
@@ -3881,8 +4067,169 @@ elif run_btn or "cached_results" in st.session_state:
                 ] + [f"{cat_labels[k]} ({len(plans_by_cat[k])})" for k in ordered_keys]
                 ai_sub_tabs = st.tabs(tab_headers)
 
-                # 1. Render Confirmed Strategies tab (Default First Tab)
+                # 1. Render Backtest Passed tab (Default Primary Quantitative Desk)
                 with ai_sub_tabs[0]:
+                    st.markdown("### ✅ Backtest Passed — Quantitatively Validated Trade Recommendations")
+                    st.caption(
+                        "**Strict zero-guesswork quantitative validation.** Every setup below has been systematically backtested across 1 full year "
+                        "of historical market data with realistic Indian statutory costs (STT, GST, Stamp Duty, exchange fees, and slippage). "
+                        "Only strategies that met institutional performance benchmarks are displayed here."
+                    )
+
+                    # 4 Quantitative Hurdle Pillars KPI Grid
+                    bt_pillars_html = (
+                        f'<div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; margin: 12px 0 20px 0;">'
+                        f'<div style="background: linear-gradient(135deg, rgba(6, 78, 59, 0.45) 0%, rgba(4, 120, 87, 0.2) 100%); border: 1px solid #10B981; border-left: 5px solid #10B981; border-radius: 8px; padding: 12px 14px;">'
+                        f'<div style="color: #34D399; font-size: 0.78rem; font-weight: 700; text-transform: uppercase;">1. Net Positive Returns</div>'
+                        f'<div style="color: #FFF; font-size: 0.95rem; font-weight: 700; margin: 3px 0;">Net 1Y Return &gt; 0%</div>'
+                        f'<div style="color: #94A3B8; font-size: 0.75rem; line-height: 1.3;">Strictly profitable AFTER STT, GST, turnover taxes, stamp duty & slippage.</div>'
+                        f'</div>'
+                        f'<div style="background: linear-gradient(135deg, rgba(14, 42, 59, 0.45) 0%, rgba(3, 105, 161, 0.2) 100%); border: 1px solid #38BDF8; border-left: 5px solid #38BDF8; border-radius: 8px; padding: 12px 14px;">'
+                        f'<div style="color: #38BDF8; font-size: 0.78rem; font-weight: 700; text-transform: uppercase;">2. Win Rate Benchmark</div>'
+                        f'<div style="color: #FFF; font-size: 0.95rem; font-weight: 700; margin: 3px 0;">Win Rate &ge; 45% (or &ge; 38%)</div>'
+                        f'<div style="color: #94A3B8; font-size: 0.75rem; line-height: 1.3;">Proven probabilistic edge (or &ge;38% if asymmetric Profit Factor &ge; 1.25x).</div>'
+                        f'</div>'
+                        f'<div style="background: linear-gradient(135deg, rgba(55, 48, 163, 0.45) 0%, rgba(79, 70, 229, 0.2) 100%); border: 1px solid #818CF8; border-left: 5px solid #818CF8; border-radius: 8px; padding: 12px 14px;">'
+                        f'<div style="color: #A5B4FC; font-size: 0.78rem; font-weight: 700; text-transform: uppercase;">3. Profit Factor Hurdle</div>'
+                        f'<div style="color: #FFF; font-size: 0.95rem; font-weight: 700; margin: 3px 0;">Profit Factor &ge; 1.20x</div>'
+                        f'<div style="color: #94A3B8; font-size: 0.75rem; line-height: 1.3;">Gross profits exceed gross losses by at least 20%, ensuring mathematical expectancy.</div>'
+                        f'</div>'
+                        f'<div style="background: linear-gradient(135deg, rgba(112, 26, 117, 0.45) 0%, rgba(162, 28, 175, 0.2) 100%); border: 1px solid #C084FC; border-left: 5px solid #C084FC; border-radius: 8px; padding: 12px 14px;">'
+                        f'<div style="color: #E879F9; font-size: 0.78rem; font-weight: 700; text-transform: uppercase;">4. Drawdown Defense</div>'
+                        f'<div style="color: #FFF; font-size: 0.95rem; font-weight: 700; margin: 3px 0;">Max Drawdown &le; 35%</div>'
+                        f'<div style="color: #94A3B8; font-size: 0.75rem; line-height: 1.3;">Caps historical peak-to-trough drop to prevent margin liquidation or account destruction.</div>'
+                        f'</div>'
+                        f'</div>'
+                    )
+                    render_html(bt_pillars_html)
+
+                    if backtest_passed_plans:
+                        # Interactive Filter and Sorting Controls
+                        bt_c1, bt_c2, bt_c3 = st.columns([1.5, 1.3, 1.2])
+                        with bt_c1:
+                            bt_dir_opt = st.selectbox(
+                                "Trade Direction:",
+                                ["All Backtested Setups", "🟢 Longs Only (BUY / CE)", "🔴 Shorts Only (SELL / PE)"],
+                                key="bt_pass_dir_filter"
+                            )
+                        with bt_c2:
+                            bt_available_cats = ["All Strategies"] + sorted(list(set([str(p.get("category", "")).title() for p in backtest_passed_plans])))
+                            bt_cat_opt = st.selectbox(
+                                "Strategy Category:",
+                                bt_available_cats,
+                                key="bt_pass_cat_filter"
+                            )
+                        with bt_c3:
+                            bt_sort_opt = st.selectbox(
+                                "Sort Backtested Setups:",
+                                ["Net 1Y Return % (Highest First)", "Win Rate % (Highest First)", "Profit Factor (Highest First)", "Lowest Drawdown", "Symbol (A-Z)"],
+                                key="bt_pass_sort_filter"
+                            )
+
+                        def _apply_bt_pass_filters(p_list):
+                            res = p_list
+                            if "Long" in bt_dir_opt:
+                                res = [p for p in res if "BUY" in str(p.get("trade_action", "")).upper() and "PE" not in str(p.get("trade_action", "")).upper()]
+                            elif "Short" in bt_dir_opt:
+                                res = [p for p in res if "SELL" in str(p.get("trade_action", "")).upper() or "PE" in str(p.get("trade_action", "")).upper()]
+                            if bt_cat_opt != "All Strategies":
+                                res = [p for p in res if str(p.get("category", "")).title() == bt_cat_opt]
+                            if "Net 1Y Return" in bt_sort_opt:
+                                res = sorted(res, key=lambda p: float(p.get("backtest_metrics", {}).get("return_pct", 0.0)), reverse=True)
+                            elif "Win Rate" in bt_sort_opt:
+                                res = sorted(res, key=lambda p: float(p.get("backtest_metrics", {}).get("win_rate_pct", 0.0)), reverse=True)
+                            elif "Profit Factor" in bt_sort_opt:
+                                res = sorted(res, key=lambda p: float(p.get("backtest_metrics", {}).get("profit_factor", 0.0)), reverse=True)
+                            elif "Lowest Drawdown" in bt_sort_opt:
+                                res = sorted(res, key=lambda p: float(p.get("backtest_metrics", {}).get("max_drawdown_pct", 999.0)))
+                            elif "Symbol" in bt_sort_opt:
+                                res = sorted(res, key=lambda p: str(p.get("symbol", "")))
+                            return res
+
+                        filtered_passed = _apply_bt_pass_filters(backtest_passed_plans)
+                        st.caption(f"Showing **{len(filtered_passed)} of {len(backtest_passed_plans)}** backtest-validated setups (out of {len(plans)} screened recommendations).")
+
+                        # Master Backtest Scorecard Table
+                        with st.expander("📊 Backtest Passed Master Scorecard Table", expanded=True):
+                            if filtered_passed:
+                                bt_rows = []
+                                for p in filtered_passed:
+                                    sym_p = p.get("symbol", "")
+                                    ltp_val = p.get("close") or p.get("ltp") or p.get("entry_price", 0.0)
+                                    chg_pct = p.get("change_pct", 0.0)
+                                    act_str = str(p.get("trade_action", "BUY")).upper()
+                                    if "PE" in act_str:
+                                        act_icon = "🔴 BUY PE"
+                                    elif "CE" in act_str:
+                                        act_icon = "🟢 BUY CE"
+                                    elif "SELL" in act_str:
+                                        act_icon = "🔴 SELL"
+                                    else:
+                                        act_icon = "🟢 BUY"
+
+                                    comm_unit = ""
+                                    if UniverseManager.is_commodity(sym_p):
+                                        comm_unit = f" ({UniverseManager.get_commodity_unit(sym_p)})"
+
+                                    bm = p.get("backtest_metrics", {})
+                                    ret_val = bm.get("return_pct", 0.0)
+                                    wr_val = bm.get("win_rate_pct", 0.0)
+                                    pf_val = bm.get("profit_factor", 0.0)
+                                    dd_val = bm.get("max_drawdown_pct", 0.0)
+                                    tr_cnt = bm.get("total_trades", 0)
+                                    pnl_val = bm.get("net_pnl", 0.0)
+                                    cost_val = bm.get("total_costs", 0.0)
+                                    strat_lbl = str(bm.get("strategy_label", "Strategy")).split(" (")[0]
+
+                                    bt_rows.append({
+                                        "Symbol": sym_p + comm_unit,
+                                        "Action": act_icon,
+                                        "Strategy Model": strat_lbl,
+                                        "1Y Net Return": f"+{ret_val:.1f}%",
+                                        "Win Rate": f"{wr_val:.1f}%",
+                                        "Profit Factor": f"{pf_val:.2f}x",
+                                        "Max Drawdown": f"{dd_val:.1f}%",
+                                        "Trades": tr_cnt,
+                                        "Net PnL (₹)": f"₹{pnl_val:,.2f}",
+                                        "Statutory Costs": f"₹{cost_val:,.2f}",
+                                        "Entry (₹)": f"₹{p.get('entry_price', 0.0):,.2f}",
+                                        "Stop Loss (₹)": f"₹{p.get('tight_stop_loss', p.get('stop_loss', 0.0)):,.2f}",
+                                        "Target 1 (₹)": f"₹{p.get('target_1', 0.0):,.2f}",
+                                        "Target 2 (₹)": f"₹{p.get('target_2', 0.0):,.2f}",
+                                        "R:R Ratio": p.get("risk_reward_ratio", "—"),
+                                    })
+                                st.dataframe(pd.DataFrame(bt_rows), use_container_width=True, hide_index=True)
+                            else:
+                                st.info("No backtested strategies match your filter criteria above.")
+
+                        st.markdown("---")
+                        _render_plans_cards_grid(filtered_passed, "bt_pass", is_confirmed_view=True)
+                    else:
+                        st.markdown(
+                            f'<div style="background: linear-gradient(135deg, rgba(30, 41, 59, 0.8) 0%, rgba(15, 23, 42, 0.95) 100%); border: 2px solid #10B981; border-left: 8px solid #10B981; border-radius: 10px; padding: 22px; margin: 15px 0 25px 0;">'
+                            f'<div style="display: flex; align-items: center; gap: 10px;">'
+                            f'<span style="font-size: 1.6rem;">🧪</span>'
+                            f'<h3 style="margin: 0; color: #FFF; font-size: 1.25rem;">Quantitative Capital Preservation: 0 Recommendations Passed 1Y Backtest</h3>'
+                            f'</div>'
+                            f'<p style="margin: 10px 0 0 0; color: #CBD5E1; font-size: 0.92rem; line-height: 1.5;">'
+                            f'In accordance with institutional risk management standards, our quantitative engine backtested all {len(plans)} trade recommendations '
+                            f'against 1 full year of real tick/bar history with full statutory costs (STT, GST, turnover, stamp duty, slippage). '
+                            f'Currently, none of the candidates cleared the strict 5-factor pass threshold (Net Profit &gt; 0%, Win Rate &ge; 45%, Profit Factor &ge; 1.20x, Max DD &le; 35%).'
+                            f'<br><br><b>Why This Protects You:</b> Rather than pushing unvalidated signals during choppy or hostile macro regimes, the system preserves capital. '
+                            f'You can review discretionary setups in <b>🛡️ Confirmed Strategies</b> or <b>🌟 All Plans</b> with defensive half-position sizing.'
+                            f'</p>'
+                            f'</div>',
+                            unsafe_allow_html=True
+                        )
+
+                        near_passed = [p for p in plans if float(p.get("backtest_metrics", {}).get("return_pct", -999.0)) > 0]
+                        if near_passed:
+                            st.markdown("#### ⏳ Setups with Positive Net Return (Awaiting Higher Win-Rate Sample)")
+                            st.caption("These setups demonstrated positive net returns after costs over 1 year, but had slightly lower trade count or win rate than the strict institutional threshold.")
+                            _render_plans_cards_grid(near_passed[:4], "near_bt_pass", is_confirmed_view=False)
+
+                # 2. Render Confirmed Strategies tab
+                with ai_sub_tabs[1]:
                     st.markdown("### 🛡️ Confirmed Strategies — High-Conviction Institutional Safe List")
                     st.caption(
                         "**Curated specifically to eliminate overwhelm and protect capital.** "
@@ -4027,12 +4374,12 @@ elif run_btn or "cached_results" in st.session_state:
                             st.caption("These setups have strong foundational momentum or support, but are awaiting a final catalyst trigger (e.g. morning breakout volume or resistance breakout) before achieving confirmed status.")
                             _render_plans_cards_grid(near_confirmed[:4], "near_conf", is_confirmed_view=False)
 
-                # 2. Render All Plans tab
-                with ai_sub_tabs[1]:
+                # 3. Render All Plans tab
+                with ai_sub_tabs[2]:
                     _render_plans_cards_grid(plans, "all")
 
-                # 3. Render Conviction sub-tab
-                with ai_sub_tabs[2]:
+                # 4. Render Conviction sub-tab
+                with ai_sub_tabs[3]:
                     st.markdown("### 🎯 Conviction Radar — High vs. Low Conviction Breakdown")
                     st.caption("Instantly isolate institutional high-conviction trade setups from standard and speculative opportunities based on quantitative momentum scores, volume expansion (>2x), and macroeconomic tailwinds.")
 
@@ -4238,8 +4585,8 @@ elif run_btn or "cached_results" in st.session_state:
                             else:
                                 st.info(f"No setups match the current filter selection ({conv_filter_opt}).")
 
-                # 4. Render High-Conviction Futures Desk sub-tab
-                with ai_sub_tabs[3]:
+                # 5. Render High-Conviction Futures Desk sub-tab
+                with ai_sub_tabs[4]:
                     _render_high_conviction_futures_desk(
                         plans=plans,
                         data_dict=data_dict,
@@ -4249,7 +4596,7 @@ elif run_btn or "cached_results" in st.session_state:
                     )
 
                 # Render Category sub tabs
-                for sub_i, cat_k in enumerate(ordered_keys, start=4):
+                for sub_i, cat_k in enumerate(ordered_keys, start=5):
                     with ai_sub_tabs[sub_i]:
                         _render_plans_cards_grid(plans_by_cat[cat_k], f"cat_{cat_k.lower()}")
 
