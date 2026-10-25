@@ -1888,9 +1888,14 @@ if run_btn or "cached_results" in st.session_state:
         )
         render_html(active_banner_html)
 
-    # 1-Click Live Resync Action
-    btn_c1, btn_c2 = st.columns([3, 1])
+    # 1-Click New Market Search & Live Resync Actions
+    btn_c1, btn_c2, btn_c3 = st.columns([2.6, 1.2, 1.2])
     with btn_c2:
+        if st.button("🔍 New Market Search", key="btn_dash_new_search", help="Return to the search page to explore a different universe or strategy", use_container_width=True):
+            st.session_state.pop("cached_results", None)
+            st.session_state.pop("data_dict", None)
+            st.rerun()
+    with btn_c3:
         if st.button("⚡ Force Live Resync", key="btn_dash_live_resync", help="Clears memory and pulls fresh live quotes from exchange feeds immediately", use_container_width=True):
             st.session_state.pop("cached_results", None)
             st.session_state.pop("data_dict", None)
@@ -4035,9 +4040,259 @@ if run_btn or "cached_results" in st.session_state:
             st.info("Run a screen to inspect candidate raw data and indicators.")
 
 else:
-    st.info("👈 Select your options on the sidebar and click **'Run Live Market Screen'** to begin market scans, or access strategy backtesting and live position tracking below:")
-    tab_else_backtest, tab_else_tracker = st.tabs(["🧪 Strategy Backtesting & Research", "📌 Live Item Tracker"])
-    with tab_else_backtest:
+    # ----------------- HOME LANDING PAGE: SEARCH FOR RECOMMENDATIONS FIRST -----------------
+    tab_search_home, tab_indep_bt_home, tab_tracker_home = st.tabs([
+        "🔍 Search Trade Recommendations",
+        "🧪 Independent Strategy Backtesting (Optional)",
+        "📌 Live Item Tracker"
+    ])
+
+    with tab_search_home:
+        # Hero Banner
+        hero_html = (
+            f'<div style="background: linear-gradient(135deg, #0f172a 0%, #1e1b4b 50%, #0f172a 100%); '
+            f'border: 1px solid rgba(99, 102, 241, 0.35); border-left: 6px solid #6366F1; border-radius: 12px; '
+            f'padding: 24px 28px; margin-bottom: 22px; box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);">'
+            f'<div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 16px;">'
+            f'<div>'
+            f'<div style="display: flex; align-items: center; gap: 10px;">'
+            f'<span style="font-size: 2rem;">🔍</span>'
+            f'<h2 style="margin: 0; color: #FFFFFF; font-size: 1.55rem; font-weight: 800; letter-spacing: 0.3px;">'
+            f'Discover High-Probability Trade Recommendations'
+            f'</h2>'
+            f'</div>'
+            f'<p style="margin: 8px 0 0 0; color: #CBD5E1; font-size: 0.94rem; line-height: 1.5; max-width: 820px;">'
+            f'Screen 500+ Indian Equities, Index Futures & Options, and MCX Commodities using institutional quantitative models. '
+            f'Review actionable AI trade plans with clear entry triggers, multi-stage targets, and tight stop losses — then '
+            f'<b>backtest any setup with 1 click directly from the results</b>.'
+            f'</p>'
+            f'</div>'
+            f'<div style="background: rgba(99, 102, 241, 0.15); border: 1px solid rgba(99, 102, 241, 0.4); border-radius: 8px; padding: 10px 16px; text-align: center;">'
+            f'<div style="color: #A5B4FC; font-size: 0.78rem; font-weight: 700; text-transform: uppercase;">Engine Status</div>'
+            f'<div style="color: #10B981; font-size: 1.05rem; font-weight: 800; margin-top: 2px;">🟢 Ready to Scan</div>'
+            f'</div>'
+            f'</div>'
+            f'</div>'
+        )
+        render_html(hero_html)
+
+        # 3-Step Recommendation-to-Backtest Journey Strip
+        flow_strip_html = (
+            f'<div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 14px; margin-bottom: 24px;">'
+            f'<div style="background: #1e293b; border: 1px solid #334155; border-radius: 8px; padding: 14px 16px;">'
+            f'<div style="color: #38BDF8; font-size: 0.8rem; font-weight: 800; text-transform: uppercase;">Step 1: Search Universe</div>'
+            f'<div style="color: #FFF; font-size: 1.02rem; font-weight: 700; margin: 4px 0;">Pick Stocks or Presets</div>'
+            f'<div style="color: #94A3B8; font-size: 0.82rem; line-height: 1.4;">Scan Bluechips, F&O 180+, Midcaps, or Custom Tickers across 6 quantitative technical screeners.</div>'
+            f'</div>'
+            f'<div style="background: #1e293b; border: 1px solid #334155; border-radius: 8px; padding: 14px 16px;">'
+            f'<div style="color: #A855F7; font-size: 0.8rem; font-weight: 800; text-transform: uppercase;">Step 2: AI Trade Plans</div>'
+            f'<div style="color: #FFF; font-size: 1.02rem; font-weight: 700; margin: 4px 0;">Actionable Risk Rules</div>'
+            f'<div style="color: #94A3B8; font-size: 0.82rem; line-height: 1.4;">Inspect entry triggers, T1/T2 targets, stop losses, position sizing, and macro headwinds.</div>'
+            f'</div>'
+            f'<div style="background: #1e293b; border: 1px solid #334155; border-radius: 8px; padding: 14px 16px;">'
+            f'<div style="color: #10B981; font-size: 0.8rem; font-weight: 800; text-transform: uppercase;">Step 3: 1-Click Backtesting</div>'
+            f'<div style="color: #FFF; font-size: 1.02rem; font-weight: 700; margin: 4px 0;">Verify Before Trading</div>'
+            f'<div style="color: #94A3B8; font-size: 0.82rem; line-height: 1.4;">Directly simulate the suggested strategy on that stock with zero look-ahead bias and exact Indian costs.</div>'
+            f'</div>'
+            f'</div>'
+        )
+        render_html(flow_strip_html)
+
+        # Primary Search Form Card
+        st.markdown("#### 🎯 Search Parameters & Customization")
+        with st.form("home_search_recommendations_form", clear_on_submit=False):
+            hs_c1, hs_c2, hs_c3 = st.columns([1.5, 1.5, 1.0])
+            with hs_c1:
+                home_universe = st.selectbox(
+                    "Select Asset Universe",
+                    ["NIFTY_50", "🏛️ INDICES (NIFTY, BankNifty, Sensex...)", "NSE_FO", "NIFTY_500", "MCX Commodities", "Custom"],
+                    index=0,
+                    key="home_univ_picker",
+                    help="NIFTY_50: Top 50 bluechips. INDICES: Nifty, BankNifty, Sensex. NSE_FO: 180+ liquid F&O stocks. MCX Commodities: Gold, Silver, Crude, Gas."
+                )
+            with hs_c2:
+                home_strat = st.selectbox(
+                    "Strategy Filter / Style",
+                    [
+                        "All Strategies",
+                        "First-to-Recover Dip Leaders",
+                        "Breakout (Multi-Week & 52W)",
+                        "Breakdown (Short & Distribution)",
+                        "Swing (Pullback & Value)",
+                        "BTST (Overnight Momentum)",
+                        "Intraday Momentum",
+                        "Options (CE & PE Buildup)",
+                        "Options CE (Call Options Only)",
+                        "Options PE (Put Options Only)"
+                    ],
+                    index=0,
+                    key="home_strat_picker"
+                )
+            with hs_c3:
+                home_top_n = st.slider("Max Candidates / Category", min_value=3, max_value=15, value=5, key="home_top_slider")
+
+            home_custom_tickers = ""
+            if home_universe == "Custom":
+                home_custom_tickers = st.text_area(
+                    "Enter Custom Tickers (comma separated)",
+                    "RELIANCE, TCS, INFY, TMPV, HDFCBANK, AXISBANK, TRENT, BEL, GOLDM, SILVERM, CRUDEOIL",
+                    key="home_custom_syms"
+                )
+
+            btn_home_search = st.form_submit_button(
+                "🔍 Search Trade Recommendations & Generate AI Plans",
+                type="primary",
+                use_container_width=True
+            )
+
+        if btn_home_search:
+            with st.spinner("Syncing candles, macro indicators & computing vectorized screeners..."):
+                symbols, data_dict, results, index_results, custom_levels, elapsed, data_health, macro_context = execute_screening(
+                    home_universe,
+                    home_custom_tickers,
+                    home_strat,
+                    home_top_n,
+                    provider_choice,
+                    breeze_api_key_in,
+                    breeze_secret_key_in,
+                    breeze_session_token_in,
+                    bypass_cache=bypass_cache_flag,
+                    cache_ttl=cache_ttl
+                )
+                st.session_state["symbols"] = symbols
+                st.session_state["data_dict"] = data_dict
+                st.session_state["cached_results"] = results
+                st.session_state["index_results"] = index_results
+                st.session_state["custom_levels"] = custom_levels
+                st.session_state["elapsed"] = elapsed
+                st.session_state["data_health"] = data_health
+                st.session_state["macro_context"] = macro_context
+                st.rerun()
+
+        st.markdown("---")
+
+        # 1-Click Popular Recommendation Presets
+        st.markdown("#### ⚡ Popular Recommendation Presets")
+        st.caption("Quickly trigger high-conviction screening workflows with pre-tuned parameters:")
+
+        p_col1, p_col2, p_col3 = st.columns(3)
+        with p_col1:
+            if st.button("🚀 Top Dip Leaders (Pullback Alpha)", key="preset_dip_leaders", use_container_width=True):
+                with st.spinner("Scanning for high-relative-strength dip recovery leaders..."):
+                    symbols, data_dict, results, index_results, custom_levels, elapsed, data_health, macro_context = execute_screening(
+                        "NSE_FO", "", "First-to-Recover Dip Leaders", 5, provider_choice,
+                        breeze_api_key_in, breeze_secret_key_in, breeze_session_token_in,
+                        bypass_cache=bypass_cache_flag, cache_ttl=cache_ttl
+                    )
+                    st.session_state["symbols"] = symbols
+                    st.session_state["data_dict"] = data_dict
+                    st.session_state["cached_results"] = results
+                    st.session_state["index_results"] = index_results
+                    st.session_state["custom_levels"] = custom_levels
+                    st.session_state["elapsed"] = elapsed
+                    st.session_state["data_health"] = data_health
+                    st.session_state["macro_context"] = macro_context
+                    st.rerun()
+
+        with p_col2:
+            if st.button("⚡ High-Volume 52W Breakouts", key="preset_breakouts", use_container_width=True):
+                with st.spinner("Scanning for 52-week & multi-week institutional breakouts..."):
+                    symbols, data_dict, results, index_results, custom_levels, elapsed, data_health, macro_context = execute_screening(
+                        "NIFTY_50", "", "Breakout (Multi-Week & 52W)", 5, provider_choice,
+                        breeze_api_key_in, breeze_secret_key_in, breeze_session_token_in,
+                        bypass_cache=bypass_cache_flag, cache_ttl=cache_ttl
+                    )
+                    st.session_state["symbols"] = symbols
+                    st.session_state["data_dict"] = data_dict
+                    st.session_state["cached_results"] = results
+                    st.session_state["index_results"] = index_results
+                    st.session_state["custom_levels"] = custom_levels
+                    st.session_state["elapsed"] = elapsed
+                    st.session_state["data_health"] = data_health
+                    st.session_state["macro_context"] = macro_context
+                    st.rerun()
+
+        with p_col3:
+            if st.button("🌙 BTST Overnight Momentum", key="preset_btst", use_container_width=True):
+                with st.spinner("Scanning for closing momentum candidates with gap-up probability..."):
+                    symbols, data_dict, results, index_results, custom_levels, elapsed, data_health, macro_context = execute_screening(
+                        "NIFTY_50", "", "BTST (Overnight Momentum)", 5, provider_choice,
+                        breeze_api_key_in, breeze_secret_key_in, breeze_session_token_in,
+                        bypass_cache=bypass_cache_flag, cache_ttl=cache_ttl
+                    )
+                    st.session_state["symbols"] = symbols
+                    st.session_state["data_dict"] = data_dict
+                    st.session_state["cached_results"] = results
+                    st.session_state["index_results"] = index_results
+                    st.session_state["custom_levels"] = custom_levels
+                    st.session_state["elapsed"] = elapsed
+                    st.session_state["data_health"] = data_health
+                    st.session_state["macro_context"] = macro_context
+                    st.rerun()
+
+        p_col4, p_col5, p_col6 = st.columns(3)
+        with p_col4:
+            if st.button("🎯 Two-Way Breakout / Breakdown Levels", key="preset_levels", use_container_width=True):
+                with st.spinner("Calculating institutional rise/fall boundary thresholds..."):
+                    symbols, data_dict, results, index_results, custom_levels, elapsed, data_health, macro_context = execute_screening(
+                        "NIFTY_50", "", "All Strategies", 5, provider_choice,
+                        breeze_api_key_in, breeze_secret_key_in, breeze_session_token_in,
+                        bypass_cache=bypass_cache_flag, cache_ttl=cache_ttl
+                    )
+                    st.session_state["symbols"] = symbols
+                    st.session_state["data_dict"] = data_dict
+                    st.session_state["cached_results"] = results
+                    st.session_state["index_results"] = index_results
+                    st.session_state["custom_levels"] = custom_levels
+                    st.session_state["elapsed"] = elapsed
+                    st.session_state["data_health"] = data_health
+                    st.session_state["macro_context"] = macro_context
+                    st.rerun()
+
+        with p_col5:
+            if st.button("🌊 Asymmetric Swing Setups", key="preset_swing", use_container_width=True):
+                with st.spinner("Screening for pullback setups at key dynamic supports..."):
+                    symbols, data_dict, results, index_results, custom_levels, elapsed, data_health, macro_context = execute_screening(
+                        "NIFTY_50", "", "Swing (Pullback & Value)", 5, provider_choice,
+                        breeze_api_key_in, breeze_secret_key_in, breeze_session_token_in,
+                        bypass_cache=bypass_cache_flag, cache_ttl=cache_ttl
+                    )
+                    st.session_state["symbols"] = symbols
+                    st.session_state["data_dict"] = data_dict
+                    st.session_state["cached_results"] = results
+                    st.session_state["index_results"] = index_results
+                    st.session_state["custom_levels"] = custom_levels
+                    st.session_state["elapsed"] = elapsed
+                    st.session_state["data_health"] = data_health
+                    st.session_state["macro_context"] = macro_context
+                    st.rerun()
+
+        with p_col6:
+            if st.button("🔴 Distribution / Breakdown (Short)", key="preset_breakdown", use_container_width=True):
+                with st.spinner("Screening for breakdown candidates and put option plays..."):
+                    symbols, data_dict, results, index_results, custom_levels, elapsed, data_health, macro_context = execute_screening(
+                        "NSE_FO", "", "Breakdown (Short & Distribution)", 5, provider_choice,
+                        breeze_api_key_in, breeze_secret_key_in, breeze_session_token_in,
+                        bypass_cache=bypass_cache_flag, cache_ttl=cache_ttl
+                    )
+                    st.session_state["symbols"] = symbols
+                    st.session_state["data_dict"] = data_dict
+                    st.session_state["cached_results"] = results
+                    st.session_state["index_results"] = index_results
+                    st.session_state["custom_levels"] = custom_levels
+                    st.session_state["elapsed"] = elapsed
+                    st.session_state["data_health"] = data_health
+                    st.session_state["macro_context"] = macro_context
+                    st.rerun()
+
+    with tab_indep_bt_home:
+        st.markdown("### 🧪 Independent Strategy Backtesting & Research")
+        st.caption(
+            "Perform standalone quantitative simulations across custom symbols, option strikes, and historical date ranges "
+            "independently without running a market scan first. To backtest recommended setups directly, use the "
+            "**🔍 Search Trade Recommendations** tab or launch backtests directly from the **🤖 AI Trade Plans** results."
+        )
         render_backtesting_view(current_user=get_current_user() or "trader", data_dict={})
-    with tab_else_tracker:
+
+    with tab_tracker_home:
         render_item_tracker_view(current_user=get_current_user() or "trader", data_dict={})

@@ -23,7 +23,7 @@ class TestStreamlitUIViews(unittest.TestCase):
         cls.app_path = str(root_dir / "ui" / "app.py")
 
     def test_scenario_1_landing_page_default_state(self):
-        """Tests that initial landing page mounts immediately with Backtesting Lab & Tracker."""
+        """Tests that initial landing page mounts immediately with Search Recommendations as the first view."""
         at = AppTest.from_file(self.app_path, default_timeout=35)
         at.session_state["authenticated"] = True
         at.session_state["username"] = "test_trader"
@@ -31,19 +31,21 @@ class TestStreamlitUIViews(unittest.TestCase):
         at.run()
         self.assertEqual(len(at.exception), 0, f"App crashed on default mount: {at.exception}")
 
-        # Verify info banner and initial tabs
-        info_msgs = [info.value for info in at.info]
-        self.assertTrue(any("Run Live Market Screen" in m for m in info_msgs))
-
-        # Check that backtest form elements are present in default state
+        # Check search controls and parameters on the primary landing page
         select_labels = [s.label for s in at.selectbox]
+        self.assertIn("Select Asset Universe", select_labels)
+        self.assertIn("Strategy Filter / Style", select_labels)
+
+        # Check search button and recommendation presets
+        btn_labels = [b.label for b in at.button]
+        self.assertTrue(any("Search Trade Recommendations" in b for b in btn_labels))
+        self.assertTrue(any("Top Dip Leaders" in b for b in btn_labels))
+        self.assertTrue(any("52W Breakouts" in b for b in btn_labels))
+
+        # Check that independent backtest option is also available if needed
         self.assertIn("Strategy Template", select_labels)
         self.assertIn("Underlying Symbol", select_labels)
-        self.assertIn("Instrument Segment", select_labels)
-
-        # Check form submit buttons
-        btn_labels = [b.label for b in at.button]
-        self.assertTrue(any("Backtest" in b for b in btn_labels))
+        self.assertTrue(any("Run Quantitative Backtest" in b for b in btn_labels))
 
     def test_scenario_2_full_screened_state_11_tabs(self):
         """Tests the full multi-tab dashboard after market scan results are loaded."""
@@ -105,6 +107,10 @@ class TestStreamlitUIViews(unittest.TestCase):
         markdown_text = " ".join([m.value for m in at.markdown])
         self.assertIn("Strategy Backtesting", markdown_text)
         self.assertIn("Live Item Tracker", markdown_text)
+
+        # Check New Market Search button to return to search home
+        btn_labels = [b.label for b in at.button]
+        self.assertTrue(any("New Market Search" in b for b in btn_labels))
 
     def test_scenario_3_backtest_performance_results_display(self):
         """Tests that active backtest report renders all KPI cards, Plotly charts, and tables."""
