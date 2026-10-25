@@ -296,13 +296,14 @@ class AIRuleStrategy(Strategy):
 
     def __init__(
         self,
-        name: str,
-        rules: Dict[str, Any],
+        name: str = "AI Dynamic Rule Strategy",
+        rules: Optional[Dict[str, Any]] = None,
         segment: str = "OPTIONS",
         stop_loss_pct: float = 0.03,
         target_pct: float = 0.06,
         max_holding_bars: int = 10,
     ):
+        r = rules or {}
         cfg = StrategyConfig(
             name=name,
             version="AI-1.0",
@@ -310,10 +311,10 @@ class AIRuleStrategy(Strategy):
             stop_loss_pct=stop_loss_pct,
             target_pct=target_pct,
             max_holding_bars=max_holding_bars,
-            custom_params=rules,
+            custom_params=r,
         )
         super().__init__(cfg)
-        self.rules = rules
+        self.rules = r
 
     def generate_signals(
         self,

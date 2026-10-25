@@ -15,6 +15,11 @@ from core.backtesting.strategy import Strategy, StrategySignal, StrategyConfig, 
 from core.backtesting.engine import BacktestEngine, Position, Trade, PortfolioState
 from core.backtesting.analytics import BacktestAnalytics, BacktestResult
 from core.backtesting.runner import BacktestRunner
+from core.backtesting.plotting import (
+    plot_backtest_equity_curve,
+    plot_backtest_drawdown,
+    plot_cost_breakdown,
+)
 
 __all__ = [
     "IndianCostModel",
@@ -35,4 +40,7 @@ __all__ = [
     "BacktestAnalytics",
     "BacktestResult",
     "BacktestRunner",
+    "plot_backtest_equity_curve",
+    "plot_backtest_drawdown",
+    "plot_cost_breakdown",
 ]

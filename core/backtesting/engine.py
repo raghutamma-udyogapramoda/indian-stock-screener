@@ -38,6 +38,18 @@ class Position:
     accumulated_costs: CostBreakdown = field(default_factory=CostBreakdown)
     thesis: str = ""
 
+    @property
+    def capital_outlay(self) -> float:
+        """Returns the initial capital or margin outlay tied up in this position."""
+        if "SPREAD" in self.segment:
+            return sum(l["price"] * l["qty"] for l in self.legs if l["action"] == "BUY")
+        elif self.segment.startswith("OPTION"):
+            return self.entry_price * self.quantity
+        elif self.segment == "FUTURES":
+            return self.entry_price * self.quantity * 0.15
+        else:
+            return self.entry_price * self.quantity
+
     def update_valuation(self, current_spot: float, current_opt_price: Optional[float] = None):
         """Updates position mark-to-market based on current price."""
         if self.segment.startswith("OPTION"):
@@ -345,16 +357,9 @@ class BacktestEngine:
                     gross_pnl = pos.unrealized_pnl
                     net_pnl = gross_pnl - total_trade_costs.total_cost
 
-                    # Return cash (principal + net P&L)
-                    if "SPREAD" in seg:
-                        cost_basis = sum(l["price"] * l["qty"] for l in pos.legs if l["action"] == "BUY")
-                        cash += cost_basis + net_pnl
-                    elif seg.startswith("OPTION"):
-                        cash += (pos.entry_price * pos.quantity) + net_pnl
-                    elif seg == "FUTURES":
-                        cash += (pos.entry_price * pos.quantity * 0.15) + net_pnl
-                    else:
-                        cash += (pos.entry_price * pos.quantity) + net_pnl
+                    # Return capital outlay + gross P&L - exit order costs
+                    # (Note: entry costs were already deducted from cash at execution)
+                    cash += pos.capital_outlay + gross_pnl - cost_exit.total_cost
 
                     ret_pct = pos.unrealized_pnl_pct
 
@@ -389,7 +394,8 @@ class BacktestEngine:
             # STEP 4: Record Equity Snapshot
             # -------------------------------------------------------------
             unrealized = sum(p.unrealized_pnl for p in open_positions)
-            current_equity = cash + unrealized
+            locked_capital = sum(p.capital_outlay for p in open_positions)
+            current_equity = cash + locked_capital + unrealized
 
             equity_records.append({
                 "datetime": curr_dt,
@@ -424,10 +430,16 @@ class BacktestEngine:
             last_dt = timestamps[-1]
             last_bar = market_data.iloc[-1]
             for pos in open_positions:
-                cost_exit = self.cost_model.calculate_order_cost("SELL", pos.current_price, pos.quantity, segment="OPTIONS" if "OPTION" in pos.segment else "EQUITY_DELIVERY")
+                seg = pos.segment
+                cost_seg = "OPTIONS" if ("OPTION" in seg or "SPREAD" in seg) else ("FUTURES" if seg == "FUTURES" else "EQUITY_DELIVERY")
+                action_exit = "SELL" if pos.is_long else "BUY"
+                cost_exit = self.cost_model.calculate_order_cost(action_exit, pos.current_price, pos.quantity, segment=cost_seg)
                 total_trade_costs = pos.accumulated_costs + cost_exit
                 gross_pnl = pos.unrealized_pnl
                 net_pnl = gross_pnl - total_trade_costs.total_cost
+
+                # Return capital outlay + gross P&L - exit order costs
+                cash += pos.capital_outlay + gross_pnl - cost_exit.total_cost
 
                 closed_trades.append(Trade(
                     trade_id=f"TRD_{len(closed_trades)+1:04d}",
@@ -446,6 +458,12 @@ class BacktestEngine:
                     exit_reason="End of Backtest Horizon",
                     costs=total_trade_costs,
                 ))
+
+            if equity_records:
+                equity_records[-1]["cash"] = round(cash, 2)
+                equity_records[-1]["unrealized_pnl"] = 0.0
+                equity_records[-1]["equity"] = round(cash, 2)
+                equity_records[-1]["open_positions"] = 0
 
         df_equity = pd.DataFrame(equity_records).set_index("datetime")
 

@@ -249,7 +249,7 @@ class TestBacktestRunnerAndPersistence(unittest.TestCase):
         self.assertGreater(len(res.equity_curve), 0)
 
     def test_ui_plotting_helpers(self):
-        from ui.app import plot_backtest_equity_curve, plot_backtest_drawdown, plot_cost_breakdown
+        from core.backtesting import plot_backtest_equity_curve, plot_backtest_drawdown, plot_cost_breakdown
 
         res = BacktestRunner.run_backtest(
             strategy_id="SUPERTREND_BREAKOUT",
