@@ -77,7 +77,9 @@ def enrich_plans_with_backtest_evaluations(
         act = str(p_copy.get("trade_action", p_copy.get("action", ""))).upper()
 
         # 1. Strategy Model Selection
-        if "DIP" in raw_cat:
+        if "CHIKOU" in raw_cat:
+            default_strat_id = "CHIKOU_BREAKOUT"
+        elif "DIP" in raw_cat:
             default_strat_id = "RSI_PULLBACK"
         elif "BTST" in raw_cat:
             default_strat_id = "BTST_MOMENTUM"

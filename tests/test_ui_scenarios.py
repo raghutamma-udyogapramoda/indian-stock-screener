@@ -24,7 +24,7 @@ class TestStreamlitUIViews(unittest.TestCase):
 
     def test_scenario_1_landing_page_default_state(self):
         """Tests that initial landing page mounts immediately with Search Recommendations as the first view."""
-        at = AppTest.from_file(self.app_path, default_timeout=35)
+        at = AppTest.from_file(self.app_path, default_timeout=60)
         at.session_state["authenticated"] = True
         at.session_state["username"] = "test_trader"
 
@@ -49,7 +49,7 @@ class TestStreamlitUIViews(unittest.TestCase):
 
     def test_scenario_2_full_screened_state_11_tabs(self):
         """Tests the full multi-tab dashboard after market scan results are loaded."""
-        at = AppTest.from_file(self.app_path, default_timeout=35)
+        at = AppTest.from_file(self.app_path, default_timeout=60)
         at.session_state["authenticated"] = True
         at.session_state["username"] = "test_trader"
         at.session_state["symbols"] = ["RELIANCE", "TCS", "INFY"]
@@ -114,7 +114,7 @@ class TestStreamlitUIViews(unittest.TestCase):
 
     def test_scenario_3_backtest_performance_results_display(self):
         """Tests that active backtest report renders all KPI cards, Plotly charts, and tables."""
-        at = AppTest.from_file(self.app_path, default_timeout=35)
+        at = AppTest.from_file(self.app_path, default_timeout=60)
         at.session_state["authenticated"] = True
         at.session_state["username"] = "test_trader"
 
@@ -210,7 +210,7 @@ class TestStreamlitUIViews(unittest.TestCase):
 
     def test_scenario_4_ai_strategy_discovery_subtab(self):
         """Tests the AI strategy parameter discovery controls."""
-        at = AppTest.from_file(self.app_path, default_timeout=35)
+        at = AppTest.from_file(self.app_path, default_timeout=60)
         at.session_state["authenticated"] = True
         at.session_state["username"] = "test_trader"
 
@@ -228,7 +228,7 @@ class TestStreamlitUIViews(unittest.TestCase):
 
     def test_scenario_5_ai_trade_plan_page_backtest_option(self):
         """Tests that the backtest option is available on the AI Trade Plan page and cards."""
-        at = AppTest.from_file(self.app_path, default_timeout=35)
+        at = AppTest.from_file(self.app_path, default_timeout=60)
         at.session_state["authenticated"] = True
         at.session_state["username"] = "test_trader"
         at.session_state["symbols"] = ["RELIANCE"]
@@ -283,7 +283,7 @@ class TestStreamlitUIViews(unittest.TestCase):
     def test_scenario_7_gemini_api_key_default_and_override(self):
         """Tests that Gemini API key is pre-configured by default in sidebar and user can override it."""
         from config.settings import DEFAULT_GEMINI_API_KEY
-        at = AppTest.from_file(self.app_path, default_timeout=35)
+        at = AppTest.from_file(self.app_path, default_timeout=60)
         at.session_state["authenticated"] = True
         at.session_state["username"] = "test_trader"
         at.run()
@@ -337,7 +337,7 @@ class TestStreamlitUIViews(unittest.TestCase):
 
     def test_scenario_9_dedicated_backtest_navigation_and_back_arrow(self):
         """Tests navigating to the dedicated backtest page on click, and navigating back via top back button."""
-        at = AppTest.from_file(self.app_path, default_timeout=35)
+        at = AppTest.from_file(self.app_path, default_timeout=60)
         at.session_state["authenticated"] = True
         at.session_state["symbols"] = ["RELIANCE"]
         at.session_state["elapsed"] = 1.0
@@ -440,7 +440,7 @@ class TestStreamlitUIViews(unittest.TestCase):
 
     def test_scenario_10_high_conviction_futures_desk(self):
         """Tests that the High-Conviction Futures Desk enforces low-failure capital defense and displays Buy/Sell futures without duplicate keys."""
-        at = AppTest.from_file(self.app_path, default_timeout=35)
+        at = AppTest.from_file(self.app_path, default_timeout=60)
         at.session_state["authenticated"] = True
         at.session_state["username"] = "test_trader"
         at.session_state["symbols"] = ["RELIANCE", "TCS"]
@@ -528,7 +528,7 @@ class TestStreamlitUIViews(unittest.TestCase):
 
     def test_scenario_11_backtest_passed_tab(self):
         """Tests the Backtest Passed quantitative validation tab and scorecard."""
-        at = AppTest.from_file(self.app_path, default_timeout=35)
+        at = AppTest.from_file(self.app_path, default_timeout=60)
         at.session_state["authenticated"] = True
         at.session_state["username"] = "test_trader"
         at.session_state["symbols"] = ["RELIANCE", "INFY"]

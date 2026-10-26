@@ -390,6 +390,97 @@ class AIRuleStrategy(Strategy):
         return False, ""
 
 
+class ChikouBreakoutStrategy(Strategy):
+    """
+    Ichimoku Chikou Span Breakout Strategy.
+    Enters Long when:
+      - Price > Kumo Top
+      - Tenkan-sen >= Kijun-sen
+      - Chikou Span is in Open Space (Close > High of 26 bars ago)
+    Exits:
+      - Trailing stop along Kijun-sen or target reached / max bars.
+    """
+
+    def __init__(self, config: Optional[StrategyConfig] = None):
+        cfg = config or StrategyConfig(
+            name="Chikou Span Breakout Strategy",
+            version="1.0.0",
+            segment="FUTURES",
+            stop_loss_pct=0.035,
+            target_pct=0.08,
+            max_holding_bars=15,
+            trail_stop_loss=True,
+        )
+        super().__init__(cfg)
+
+    def generate_signals(
+        self,
+        market_data: pd.DataFrame,
+        portfolio_state: Any,
+        as_of_idx: int,
+    ) -> Optional[StrategySignal]:
+        if as_of_idx < 52:
+            return None
+
+        df_slice = market_data.iloc[:as_of_idx + 1]
+        curr = df_slice.iloc[-1]
+
+        close = float(curr["close"])
+        kumo_top = float(curr.get("kumo_top", 0.0))
+        tenkan = float(curr.get("tenkan_sen", 0.0))
+        kijun = float(curr.get("kijun_sen", 0.0))
+        past_high_26 = float(curr.get("past_high_26", 0.0))
+        chikou_open_space = bool(curr.get("chikou_open_space", False))
+
+        if kumo_top <= 0 or past_high_26 <= 0:
+            return None
+
+        # Ichimoku Chikou setup: Price > Kumo Top, Tenkan >= Kijun, and Chikou in open space
+        if close > kumo_top and tenkan >= (kijun * 0.995) and (close > past_high_26 or chikou_open_space):
+            ts = df_slice.index[-1]
+            sym = getattr(market_data, "symbol", "NIFTY")
+            sl_pct = max(0.02, min(0.06, (close - kijun) / close)) if kijun > 0 and kijun < close else self.config.stop_loss_pct
+
+            return StrategySignal(
+                timestamp=ts,
+                symbol=sym,
+                action="ENTER_LONG",
+                segment=self.config.segment,
+                strike_selection="ATM",
+                stop_loss_pct=sl_pct,
+                target_pct=self.config.target_pct,
+                max_holding_bars=self.config.max_holding_bars,
+                thesis=f"Chikou in open space (₹{close:,.1f} > bar -26 high ₹{past_high_26:,.1f}) & Price > Kumo",
+            )
+        return None
+
+    def evaluate_exit(
+        self,
+        position: Any,
+        current_bar: pd.Series,
+        market_data: pd.DataFrame,
+        as_of_idx: int,
+    ) -> Tuple[bool, str]:
+        bars_held = as_of_idx - position.entry_bar_idx
+        if bars_held >= self.config.max_holding_bars:
+            return True, f"Max holding bars reached ({bars_held} bars)"
+
+        close = float(current_bar["close"])
+        kijun = float(current_bar.get("kijun_sen", 0.0))
+        pnl_pct = position.unrealized_pnl_pct
+
+        # Trailing stop along Kijun-sen (classic Ichimoku exit)
+        if kijun > 0 and close < kijun:
+            return True, f"Price broke below Kijun-sen trailing baseline (₹{close:,.1f} < ₹{kijun:,.1f})"
+
+        if pnl_pct <= -self.config.stop_loss_pct:
+            return True, f"Stop Loss Hit ({pnl_pct*100.0:+.2f}%)"
+        if pnl_pct >= self.config.target_pct:
+            return True, f"Target Reached ({pnl_pct*100.0:+.2f}%)"
+
+        return False, ""
+
+
 class BuiltinStrategies:
     """Registry of pre-configured quantitative strategies."""
 
@@ -397,6 +488,7 @@ class BuiltinStrategies:
     def list_strategies(cls) -> Dict[str, str]:
         return {
             "SUPERTREND_BREAKOUT": "⚡ Supertrend Trend Breakout (Options CE/PE & Futures)",
+            "CHIKOU_BREAKOUT": "☁️ Ichimoku Chikou Breakout (Open Space Momentum)",
             "DEFINED_RISK_SPREADS": "🛡️ Defined-Risk Options Spreads (Bull Call / Bear Put)",
             "RSI_PULLBACK": "🎯 RSI Reversal Dip Buyer (High-Quality Pullback)",
             "BTST_MOMENTUM": "🌅 BTST Overnight Momentum Continuation",
@@ -407,7 +499,9 @@ class BuiltinStrategies:
     def create(cls, strategy_id: str, **kwargs) -> Strategy:
         config = kwargs.get("config")
         rules = kwargs.get("rules", {})
-        if strategy_id == "DEFINED_RISK_SPREADS":
+        if strategy_id == "CHIKOU_BREAKOUT":
+            return ChikouBreakoutStrategy(config=config)
+        elif strategy_id == "DEFINED_RISK_SPREADS":
             return OptionsSpreadStrategy(config=config)
         elif strategy_id == "AI_CUSTOM_RULE":
             rule_dict = rules if rules else {"min_rsi": 55.0, "max_rsi": 75.0, "min_rvol": 1.25, "action": "ENTER_LONG"}

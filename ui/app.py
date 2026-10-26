@@ -135,6 +135,7 @@ from providers.yfinance_provider import YahooFinanceProvider
 from screeners.breakdown import BreakdownScreener
 from screeners.breakout import BreakoutScreener
 from screeners.btst import BTSTScreener
+from screeners.chikou_breakout import ChikouBreakoutScreener
 from screeners.dip_leaders import DipLeaderScreener
 from screeners.intraday import IntradayScreener
 from screeners.options_fno import OptionsScreener
@@ -1507,6 +1508,7 @@ strategy_choice = st.sidebar.selectbox(
     [
         "All Strategies",
         "First-to-Recover Dip Leaders",
+        "Chikou Breakout (Ichimoku Setup)",
         "Breakout (Multi-Week & 52W)",
         "Breakdown (Short & Distribution)",
         "Swing (Pullback & Value)",
@@ -1671,6 +1673,8 @@ def execute_screening(u_name, custom_list, strat, top_limit, prov_mode, b_key=""
     results = {}
     if strat in ["All Strategies", "First-to-Recover Dip Leaders"]:
         results["DIP_LEADER"] = DipLeaderScreener().screen_batch(data, top_n=top_limit, benchmark_data=idx_raw)
+    if strat in ["All Strategies", "Chikou Breakout (Ichimoku Setup)", "Chikou Breakout", "CHIKOU_BREAKOUT"]:
+        results["CHIKOU_BREAKOUT"] = ChikouBreakoutScreener().screen_batch(data, top_n=top_limit, benchmark_data=idx_raw)
     if strat in ["All Strategies", "Breakout (Multi-Week & 52W)"]:
         results["BREAKOUT"] = BreakoutScreener().screen_batch(data, top_n=top_limit, benchmark_data=idx_raw)
     if strat in ["All Strategies", "Breakdown (Short & Distribution)"]:
@@ -3366,6 +3370,8 @@ elif run_btn or "cached_results" in st.session_state:
                     if retest > 0:
                         factors.append("🛡️ Retest Defense Held")
 
+                    if p_dict.get("chikou_open_space") or "CHIKOU" in str(p_dict.get("category", "")).upper():
+                        factors.append("☁️ Chikou Open Space Clearance")
                     if p_dict.get("panic_day_resilient"):
                         factors.append("💪 Panic-Day Resilient")
                     if p_dict.get("green_on_dips", 0) >= 1 or p_dict.get("category") in ["DIP_LEADER", "DIP"]:
@@ -3403,7 +3409,9 @@ elif run_btn or "cached_results" in st.session_state:
                     act = str(p_dict.get("trade_action", "")).upper()
 
                     strat_dict = BuiltinStrategies.list_strategies()
-                    if "DIP" in raw_cat:
+                    if "CHIKOU" in raw_cat:
+                        default_strat_id = "CHIKOU_BREAKOUT"
+                    elif "DIP" in raw_cat:
                         default_strat_id = "RSI_PULLBACK"
                     elif "BTST" in raw_cat:
                         default_strat_id = "BTST_MOMENTUM"
@@ -4735,6 +4743,13 @@ elif run_btn or "cached_results" in st.session_state:
              - Rupee depreciation expands operating profit margins and realizations for IT exporters (`TCS`, `INFY`, `HCLTECH`, `LTIM`) and Pharma exporters (`SUNPHARMA`, `DRREDDY`, `CIPLA`, `DIVISLAB`).
            - **India VIX Volatility Filter**:
              - High VIX ($> 18$) mandates tight risk controls, wider trailing playbooks, and favors defensive dip leaders over speculative high-beta breakouts.
+
+        9. **Ichimoku Chikou Breakout ("ONE Setup For Life" by ChikouTrader)**:
+           - **The Kumo Cloud Barrier**: $\text{Close} \ge \text{Kumo Top}$ (above both Senkou Span A and Senkou Span B). Asserts that macroeconomic supply overhang has been cleared.
+           - **Tenkan-Sen / Kijun-Sen Momentum**: $\text{Tenkan-Sen (9)} \ge \text{Kijun-Sen (26)}$ ensuring short-term trend velocity exceeds medium-term baseline.
+           - **Chikou Span in Open Space (The Core Trigger)**: Today's closing price must clear cleanly above the High of the candle 26 bars ago ($\text{Close}_t > \text{High}_{t-26}$), ensuring the Lagging Span has zero overhead price congestion or historical candles blocking momentum.
+           - **Forward Cloud Confirmation**: Leading Cloud ($\text{Future Span A} \ge \text{Future Span B}$) expanding bullish green 26 bars ahead.
+           - **Risk Management**: Initial Stop Loss anchored below the Kijun-sen or 5-day low; trailing stop along Kijun-sen with minimum 1:2.0 Risk:Reward target.
         """)
 
     with tab_audit:
@@ -4892,6 +4907,7 @@ else:
                     [
                         "All Strategies",
                         "First-to-Recover Dip Leaders",
+                        "Chikou Breakout (Ichimoku Setup)",
                         "Breakout (Multi-Week & 52W)",
                         "Breakdown (Short & Distribution)",
                         "Swing (Pullback & Value)",

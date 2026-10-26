@@ -146,6 +146,74 @@ def compute_aroon(high: pd.Series, low: pd.Series, length: int = 25) -> pd.DataF
     }, index=high.index)
 
 
+def compute_ichimoku(
+    high: pd.Series,
+    low: pd.Series,
+    close: pd.Series,
+    tenkan_period: int = 9,
+    kijun_period: int = 26,
+    senkou_b_period: int = 52
+) -> pd.DataFrame:
+    """
+    Computes full Ichimoku Kinko Hyo elements:
+      - Tenkan-sen (Conversion Line): (9-period High + 9-period Low) / 2
+      - Kijun-sen (Base Line): (26-period High + 26-period Low) / 2
+      - Senkou Span A (Leading Span A): (Tenkan + Kijun) / 2 shifted back 26 to align with current candle
+      - Senkou Span B (Leading Span B): (52-period High + 52-period Low) / 2 shifted back 26 to align with current candle
+      - Kumo Top & Kumo Bottom: max and min of Span A & Span B on the current candle
+      - Future Span A & Future Span B: unshifted values representing the forward cloud (26 bars ahead)
+      - Past High 26: high price 26 bars ago (high.shift(26))
+      - Past Low 26: low price 26 bars ago (low.shift(26))
+      - Past Close 26: close price 26 bars ago (close.shift(26))
+      - Chikou in Open Space: close > past_high_26 and close > past_max_high_26 (clearing historical congestion)
+      - Chikou Clearance Pct: percentage distance current close sits above bar 26's high
+    """
+    tenkan_sen = (high.rolling(window=tenkan_period, min_periods=tenkan_period).max() +
+                  low.rolling(window=tenkan_period, min_periods=tenkan_period).min()) / 2.0
+
+    kijun_sen = (high.rolling(window=kijun_period, min_periods=kijun_period).max() +
+                 low.rolling(window=kijun_period, min_periods=kijun_period).min()) / 2.0
+
+    future_span_a = (tenkan_sen + kijun_sen) / 2.0
+    future_span_b = (high.rolling(window=senkou_b_period, min_periods=senkou_b_period).max() +
+                     low.rolling(window=senkou_b_period, min_periods=senkou_b_period).min()) / 2.0
+
+    # On the current candle t, the cloud was generated 26 bars ago:
+    senkou_span_a = future_span_a.shift(kijun_period)
+    senkou_span_b = future_span_b.shift(kijun_period)
+
+    kumo_top = pd.concat([senkou_span_a, senkou_span_b], axis=1).max(axis=1)
+    kumo_bottom = pd.concat([senkou_span_a, senkou_span_b], axis=1).min(axis=1)
+
+    # Historical price action 26 bars ago for Chikou evaluation
+    past_high_26 = high.shift(kijun_period)
+    past_close_26 = close.shift(kijun_period)
+    past_low_26 = low.shift(kijun_period)
+    
+    # 5-bar rolling max high around 26 bars ago (24 to 28 bars ago)
+    shift_w = max(1, kijun_period - 2)
+    past_max_high_26 = high.shift(shift_w).rolling(window=5, min_periods=1).max()
+
+    chikou_open_space = (close > past_high_26) & (close > past_max_high_26)
+    chikou_clearance_pct = ((close - past_high_26) / (past_high_26 + 1e-6)) * 100.0
+
+    return pd.DataFrame({
+        "tenkan_sen": tenkan_sen,
+        "kijun_sen": kijun_sen,
+        "senkou_span_a": senkou_span_a,
+        "senkou_span_b": senkou_span_b,
+        "kumo_top": kumo_top,
+        "kumo_bottom": kumo_bottom,
+        "future_span_a": future_span_a,
+        "future_span_b": future_span_b,
+        "past_high_26": past_high_26,
+        "past_close_26": past_close_26,
+        "past_low_26": past_low_26,
+        "chikou_open_space": chikou_open_space,
+        "chikou_clearance_pct": chikou_clearance_pct,
+    }, index=high.index)
+
+
 def enrich_with_indicators(df: pd.DataFrame) -> pd.DataFrame:
     """
     Enriches an OHLCV DataFrame with all standard metrics in one vectorized pass.
@@ -164,6 +232,8 @@ def enrich_with_indicators(df: pd.DataFrame) -> pd.DataFrame:
       - Volume (RVol 20): Detects institutional participation (>1.3x 20-day volume).
       - Close Location Value (CLV): Measures intra-session buying pressure (CLV >= 0.70)
         vs institutional dumping (CLV <= 0.35).
+      - Ichimoku Kinko Hyo: Tenkan-sen (9), Kijun-sen (26), Kumo Cloud (Span A/B),
+        and Chikou Span Open Space detection for Chikou Breakout setups.
     """
     if df is None or len(df) < 20:
         return df
@@ -203,5 +273,11 @@ def enrich_with_indicators(df: pd.DataFrame) -> pd.DataFrame:
     df['volume_sma_20'] = compute_sma(df['volume'], 20)
     df['rvol_20'] = compute_rvol(df['volume'], 20)
     df['clv'] = compute_clv(df['high'], df['low'], df['close'])
+
+    # Ichimoku Kinko Hyo (Tenkan, Kijun, Kumo Cloud, Chikou clearance)
+    if len(df) >= 26:
+        ichimoku_df = compute_ichimoku(df['high'], df['low'], df['close'])
+        for col in ichimoku_df.columns:
+            df[col] = ichimoku_df[col]
 
     return df
