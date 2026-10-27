@@ -191,6 +191,42 @@ class FNOTracker:
         return new_pos
 
     @classmethod
+    def add_watchlist_item(
+        cls,
+        username: str,
+        symbol: str,
+        contract_type: str = "FUTURES",
+        strike_price: float = 0.0,
+        expiry_date: str = "",
+        lot_size: Optional[int] = None,
+        lots: int = 1,
+        buy_price: float = 0.0,
+        stop_loss: float = 0.0,
+        target: float = 0.0,
+        notes: str = "",
+        **kwargs
+    ) -> dict:
+        """
+        Alias / compatibility wrapper for add_position to support watchlist tracking semantics.
+        Accepts both strike_price/expiry_date and strike/expiry keyword arguments.
+        """
+        resolved_strike = float(kwargs.get("strike", strike_price or 0.0))
+        resolved_expiry = str(kwargs.get("expiry", expiry_date or "")).strip()
+        return cls.add_position(
+            username=username,
+            symbol=symbol,
+            contract_type=contract_type,
+            strike=resolved_strike,
+            expiry=resolved_expiry,
+            lot_size=lot_size,
+            lots=lots,
+            buy_price=buy_price,
+            stop_loss=stop_loss,
+            target=target,
+            notes=notes
+        )
+
+    @classmethod
     def delete_position(cls, username: str, position_id: str) -> bool:
         """Deletes a tracked F&O position by ID."""
         positions = cls.load_positions(username)

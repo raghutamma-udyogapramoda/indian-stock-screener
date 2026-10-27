@@ -2262,14 +2262,18 @@ def _render_high_conviction_futures_desk(
                     use_container_width=True,
                     help="Add this futures contract to your persistent F&O tracker"
                 ):
-                    FNOTracker.add_watchlist_item(
-                        current_user,
-                        sym,
+                    FNOTracker.add_position(
+                        username=current_user,
+                        symbol=sym,
                         contract_type="FUTURES",
-                        strike_price=0.0,
-                        expiry_date=item["expiry_date"],
-                        lot_size=item["lot_size"],
-                        notes=f"High-Conviction Futures {item['action']} • Margin ₹{item['approx_margin']:,.0f}"
+                        strike=0.0,
+                        expiry=str(item.get("expiry_date", "")),
+                        lot_size=item.get("lot_size"),
+                        lots=1,
+                        buy_price=float(item.get("entry_price", 0.0)),
+                        stop_loss=float(item.get("stop_loss", 0.0)),
+                        target=float(item.get("target_1", 0.0)),
+                        notes=f"High-Conviction Futures {item.get('action', '')} • Margin ₹{item.get('approx_margin', 0):,.0f}"
                     )
                     st.toast(f"✅ Added {sym} Futures to {current_user.upper()}'s Live F&O Section!", icon="⚡")
                     time.sleep(0.4)

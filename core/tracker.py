@@ -210,6 +210,11 @@ class PortfolioTracker:
         return new_pos
 
     @classmethod
+    def add_watchlist_item(cls, *args, **kwargs) -> dict:
+        """Alias for add_position for watchlist compatibility."""
+        return cls.add_position(*args, **kwargs)
+
+    @classmethod
     def delete_position(cls, username: str, position_id: str) -> bool:
         """Removes a position by ID."""
         positions = cls.load_positions(username)
