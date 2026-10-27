@@ -150,6 +150,131 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
+def inject_premium_styles():
+    """Injects high-end institutional terminal stylesheet for streamlined aesthetics and clean tabs."""
+    custom_css = """
+    <style>
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
+    
+    html, body, [class*="css"] {
+        font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif !important;
+    }
+
+    /* Streamlined Sleek Tabs (Segmented Glass Pill Design) */
+    div[data-baseweb="tab-list"] {
+        gap: 6px !important;
+        background: rgba(15, 23, 42, 0.85) !important;
+        padding: 6px 10px !important;
+        border-radius: 12px !important;
+        border: 1px solid rgba(51, 65, 85, 0.6) !important;
+        box-shadow: 0 4px 20px rgba(0, 0, 0, 0.35) !important;
+        overflow-x: auto !important;
+        flex-wrap: nowrap !important;
+        scrollbar-width: thin !important;
+    }
+    div[data-baseweb="tab-list"]::-webkit-scrollbar {
+        height: 4px;
+    }
+    div[data-baseweb="tab-list"]::-webkit-scrollbar-thumb {
+        background: rgba(99, 102, 241, 0.4);
+        border-radius: 4px;
+    }
+    div[data-baseweb="tab-list"] button[data-baseweb="tab"] {
+        background: transparent !important;
+        color: #94A3B8 !important;
+        border: 1px solid transparent !important;
+        border-radius: 8px !important;
+        padding: 7px 14px !important;
+        font-size: 0.85rem !important;
+        font-weight: 600 !important;
+        white-space: nowrap !important;
+        transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1) !important;
+    }
+    div[data-baseweb="tab-list"] button[data-baseweb="tab"]:hover {
+        color: #F8FAFC !important;
+        background: rgba(51, 65, 85, 0.5) !important;
+        border-color: rgba(99, 102, 241, 0.3) !important;
+    }
+    div[data-baseweb="tab-list"] button[aria-selected="true"] {
+        color: #FFFFFF !important;
+        background: linear-gradient(135deg, rgba(99, 102, 241, 0.35) 0%, rgba(79, 70, 229, 0.25) 100%) !important;
+        border: 1px solid rgba(129, 140, 248, 0.6) !important;
+        box-shadow: 0 2px 10px rgba(99, 102, 241, 0.25) !important;
+    }
+    div[data-baseweb="tab-border"] {
+        display: none !important;
+    }
+    div[data-baseweb="tab-highlight"] {
+        display: none !important;
+    }
+
+    /* Executive Metric KPI Cards */
+    div[data-testid="stMetric"] {
+        background: linear-gradient(135deg, #1e293b 0%, #0f172a 100%) !important;
+        border: 1px solid rgba(51, 65, 85, 0.8) !important;
+        border-radius: 10px !important;
+        padding: 12px 16px !important;
+        box-shadow: 0 4px 14px rgba(0, 0, 0, 0.25) !important;
+        transition: transform 0.2s ease, border-color 0.2s ease !important;
+    }
+    div[data-testid="stMetric"]:hover {
+        border-color: rgba(99, 102, 241, 0.5) !important;
+        transform: translateY(-2px) !important;
+    }
+    div[data-testid="stMetricLabel"] {
+        color: #94A3B8 !important;
+        font-size: 0.78rem !important;
+        font-weight: 700 !important;
+        text-transform: uppercase !important;
+        letter-spacing: 0.5px !important;
+    }
+    div[data-testid="stMetricValue"] {
+        color: #F8FAFC !important;
+        font-size: 1.4rem !important;
+        font-weight: 800 !important;
+    }
+
+    /* Clean Expanders & Drawers */
+    div[data-testid="stExpander"] {
+        background: rgba(15, 23, 42, 0.45) !important;
+        border: 1px solid rgba(51, 65, 85, 0.6) !important;
+        border-radius: 10px !important;
+        margin-bottom: 8px !important;
+    }
+    div[data-testid="stExpander"] details summary {
+        font-weight: 600 !important;
+        color: #E2E8F0 !important;
+        padding: 8px 12px !important;
+    }
+
+    /* Sleek Button Interactions */
+    div.stButton > button {
+        border-radius: 8px !important;
+        font-weight: 600 !important;
+        transition: all 0.2s ease !important;
+    }
+    div.stButton > button:hover {
+        transform: translateY(-1px) !important;
+        box-shadow: 0 4px 14px rgba(99, 102, 241, 0.3) !important;
+    }
+
+    /* Form Container Polish */
+    div[data-testid="stForm"] {
+        background: rgba(15, 23, 42, 0.5) !important;
+        border: 1px solid rgba(51, 65, 85, 0.7) !important;
+        border-radius: 12px !important;
+        padding: 16px 20px !important;
+        box-shadow: 0 4px 20px rgba(0, 0, 0, 0.2) !important;
+    }
+    </style>
+    """
+    if hasattr(st, "html"):
+        st.html(custom_css)
+    else:
+        st.markdown(custom_css, unsafe_allow_html=True)
+
+inject_premium_styles()
+
 def render_html(html_str: str):
     """Safely renders HTML without markdown parser converting indented tags into code blocks."""
     if hasattr(st, "html"):
@@ -1437,60 +1562,21 @@ if not render_login_gate():
 
 # ----------------- SIDEBAR -----------------
 render_sidebar_user_badge()
-st.sidebar.title("⚡ Screener Controls")
-
-provider_choice = st.sidebar.selectbox(
-    "Data Feed Provider",
-    [
-        "Yahoo Finance (Default)",
-        "NSE Direct (Official Exchange)",
-        "ICICI Breeze (Static / Test)",
-        "ICICI Breeze (Live Account)"
-    ],
-    index=0,
-    help="Yahoo Finance: Real-time global feeds. NSE Direct: Authoritative official National Stock Exchange Bhavcopy. ICICI Breeze: Broker account."
+st.sidebar.markdown(
+    '<div style="padding: 6px 0 14px 0; border-bottom: 1px solid rgba(51, 65, 85, 0.5); margin-bottom: 14px;">'
+    '<div style="display: flex; align-items: center; justify-content: space-between;">'
+    '<div style="display: flex; align-items: center; gap: 8px;">'
+    '<span style="font-size: 1.3rem;">⚡</span>'
+    '<span style="font-size: 1.15rem; font-weight: 800; color: #FFFFFF; letter-spacing: 0.5px;">ALGOQUANT</span>'
+    '</div>'
+    '<span style="background: rgba(99, 102, 241, 0.2); color: #A5B4FC; border: 1px solid rgba(99, 102, 241, 0.4); border-radius: 9999px; padding: 2px 8px; font-size: 0.72rem; font-weight: 700;">PRO</span>'
+    '</div>'
+    '<div style="color: #94A3B8; font-size: 0.78rem; margin-top: 4px;">Institutional Quant & AI Screener</div>'
+    '</div>',
+    unsafe_allow_html=True
 )
 
-breeze_api_key_in = ""
-breeze_secret_key_in = ""
-breeze_session_token_in = ""
-
-# Auto-detect session token if redirected from Breeze API login URL
-url_session_token = ""
-if hasattr(st, "query_params") and "apisession" in st.query_params:
-    url_session_token = st.query_params.get("apisession", "")
-
-if provider_choice == "ICICI Breeze (Live Account)":
-    with st.sidebar.expander("🔑 Breeze Broker Credentials", expanded=True):
-        breeze_api_key_in = st.text_input(
-            "Breeze App Key",
-            value=os.getenv("BREEZE_API_KEY", ""),
-            type="password",
-            help="Found under App Settings on https://api.icicidirect.com"
-        )
-        breeze_secret_key_in = st.text_input(
-            "Breeze Secret Key",
-            value=os.getenv("BREEZE_SECRET_KEY", ""),
-            type="password"
-        )
-        
-        # Pre-fill with auto-captured URL session token if present
-        default_token = url_session_token or os.getenv("BREEZE_SESSION_TOKEN", "")
-        if url_session_token:
-            st.success("✅ Auto-captured Session Token from URL!")
-            
-        breeze_session_token_in = st.text_input(
-            "Daily Session Token",
-            value=default_token,
-            type="password",
-            help="Generate daily by logging into the ICICI Direct API portal."
-        )
-
-        if breeze_api_key_in and not breeze_api_key_in.startswith("your_"):
-            login_url = f"https://api.icicidirect.com/apiuser/login?api_key={breeze_api_key_in}"
-            st.markdown(f'<a href="{login_url}" target="_blank" style="display: block; text-align: center; background: #004D25; color: #00E676; border: 1px solid #00E676; border-radius: 4px; padding: 6px; font-size: 0.82rem; font-weight: bold; text-decoration: none; margin-top: 6px;">🔗 Login to Breeze (Get Daily Token)</a>', unsafe_allow_html=True)
-            st.caption("Redirects back to this app with token auto-filled.")
-
+# --- 1. Primary Screener Controls ---
 universe_choice = st.sidebar.selectbox(
     "Select Asset Universe",
     ["NIFTY_50", "🏛️ INDICES (NIFTY, BankNifty, Sensex...)", "NSE_FO", "NIFTY_500", "🌐 Global Commodities (Gold, Silver, Crude, Copper...)", "MCX Commodities", "Custom"],
@@ -1525,48 +1611,98 @@ strategy_choice = st.sidebar.selectbox(
 
 top_n = st.sidebar.slider("Top Candidates per Category", min_value=3, max_value=15, value=5)
 
-st.sidebar.markdown("---")
-st.sidebar.subheader("🤖 AI Advisor Settings")
-gemini_key_input = st.sidebar.text_input(
-    "Gemini API Key (Pre-configured)",
-    value=GEMINI_API_KEY or DEFAULT_GEMINI_API_KEY,
-    type="password",
-    help="Default API key is pre-configured. You can override it with your own key from https://aistudio.google.com, or clear it to use the Mathematical Engine."
-)
-
-force_live_refresh = st.sidebar.checkbox(
-    "⚡ Live Force Refresh (Bypass Cache)",
-    value=False,
-    help="Forces immediate fresh downloads from exchange servers, bypassing local disk cache."
-)
-
-cache_ttl_option = st.sidebar.select_slider(
-    "Data Freshness (Cache TTL)",
-    options=["Live (0m)", "15m", "30m", "1h", "2h", "4h"],
-    value="Live (0m)",
-    help="Determines how long market data remains valid before querying live exchange feeds. 'Live (0m)' guarantees zero lag and real-time prices directly from exchange feeds."
-)
-ttl_map = {"Live (0m)": 0.0, "15m": 0.25, "30m": 0.5, "1h": 1.0, "2h": 2.0, "4h": 4.0}
-cache_ttl = ttl_map.get(cache_ttl_option, 0.0)
-bypass_cache_flag = force_live_refresh or (cache_ttl == 0.0)
-
 run_btn = st.sidebar.button("🔍 Run Live Market Screen", type="primary", use_container_width=True)
 
 if "data_health" in st.session_state and "refresh_timestamp" in st.session_state["data_health"]:
     st.sidebar.caption(f"🕒 **Last Refreshed:** {st.session_state['data_health']['refresh_timestamp']}")
 
-if is_admin():
-    if st.sidebar.button("👑 Admin Flush Cache & Memory", use_container_width=True):
-        st.cache_data.clear()
-        st.session_state.clear()
-        st.toast("✅ Admin memory cache flushed! Re-running screeners...", icon="🧹")
-        st.rerun()
-else:
-    if st.sidebar.button("🧹 Flush Cache & Reset Memory", use_container_width=True):
-        st.cache_data.clear()
-        st.session_state.clear()
-        st.toast("✅ App memory cache flushed! Re-running screeners...", icon="🧹")
-        st.rerun()
+# --- 2. Advanced Configuration Drawers (Progressive Disclosure) ---
+st.sidebar.markdown('<div style="margin: 16px 0 10px 0; border-top: 1px solid rgba(51, 65, 85, 0.4);"></div>', unsafe_allow_html=True)
+st.sidebar.caption("⚙️ **Advanced Configuration & Keys**")
+
+breeze_api_key_in = ""
+breeze_secret_key_in = ""
+breeze_session_token_in = ""
+url_session_token = ""
+if hasattr(st, "query_params") and "apisession" in st.query_params:
+    url_session_token = st.query_params.get("apisession", "")
+
+with st.sidebar.expander("📡 Data Feed & Broker Setup", expanded=False):
+    provider_choice = st.selectbox(
+        "Data Feed Provider",
+        [
+            "Yahoo Finance (Default)",
+            "NSE Direct (Official Exchange)",
+            "ICICI Breeze (Static / Test)",
+            "ICICI Breeze (Live Account)"
+        ],
+        index=0,
+        help="Yahoo Finance: Real-time global feeds. NSE Direct: Authoritative official National Stock Exchange Bhavcopy. ICICI Breeze: Broker account."
+    )
+
+    if provider_choice == "ICICI Breeze (Live Account)":
+        breeze_api_key_in = st.text_input(
+            "Breeze App Key",
+            value=os.getenv("BREEZE_API_KEY", ""),
+            type="password",
+            help="Found under App Settings on https://api.icicidirect.com"
+        )
+        breeze_secret_key_in = st.text_input(
+            "Breeze Secret Key",
+            value=os.getenv("BREEZE_SECRET_KEY", ""),
+            type="password"
+        )
+        default_token = url_session_token or os.getenv("BREEZE_SESSION_TOKEN", "")
+        if url_session_token:
+            st.success("✅ Auto-captured Session Token from URL!")
+        breeze_session_token_in = st.text_input(
+            "Daily Session Token",
+            value=default_token,
+            type="password",
+            help="Generate daily by logging into the ICICI Direct API portal."
+        )
+        if breeze_api_key_in and not breeze_api_key_in.startswith("your_"):
+            login_url = f"https://api.icicidirect.com/apiuser/login?api_key={breeze_api_key_in}"
+            st.markdown(f'<a href="{login_url}" target="_blank" style="display: block; text-align: center; background: #004D25; color: #00E676; border: 1px solid #00E676; border-radius: 4px; padding: 6px; font-size: 0.82rem; font-weight: bold; text-decoration: none; margin-top: 6px;">🔗 Login to Breeze (Get Daily Token)</a>', unsafe_allow_html=True)
+            st.caption("Redirects back to this app with token auto-filled.")
+
+with st.sidebar.expander("🤖 AI Intelligence & Model", expanded=False):
+    gemini_key_input = st.text_input(
+        "Gemini API Key (Pre-configured)",
+        value=GEMINI_API_KEY or DEFAULT_GEMINI_API_KEY,
+        type="password",
+        help="Default API key is pre-configured. You can override it with your own key from https://aistudio.google.com, or clear it to use the Mathematical Engine."
+    )
+    st.caption("✨ Mathematical Fallback Engine is automatically active if key is cleared.")
+
+with st.sidebar.expander("⚡ Feed Freshness & Cache", expanded=False):
+    force_live_refresh = st.checkbox(
+        "⚡ Live Force Refresh (Bypass Cache)",
+        value=False,
+        help="Forces immediate fresh downloads from exchange servers, bypassing local disk cache."
+    )
+    cache_ttl_option = st.select_slider(
+        "Data Freshness (Cache TTL)",
+        options=["Live (0m)", "15m", "30m", "1h", "2h", "4h"],
+        value="Live (0m)",
+        help="Determines how long market data remains valid before querying live exchange feeds. 'Live (0m)' guarantees zero lag and real-time prices directly from exchange feeds."
+    )
+    ttl_map = {"Live (0m)": 0.0, "15m": 0.25, "30m": 0.5, "1h": 1.0, "2h": 2.0, "4h": 4.0}
+    cache_ttl = ttl_map.get(cache_ttl_option, 0.0)
+    bypass_cache_flag = force_live_refresh or (cache_ttl == 0.0)
+
+    if is_admin():
+        if st.button("👑 Admin Flush Cache & Memory", use_container_width=True, key="admin_flush_btn"):
+            st.cache_data.clear()
+            st.session_state.clear()
+            st.toast("✅ Admin memory cache flushed! Re-running screeners...", icon="🧹")
+            st.rerun()
+    else:
+        if st.button("🧹 Flush Cache & Reset Memory", use_container_width=True, key="user_flush_btn"):
+            st.cache_data.clear()
+            st.session_state.clear()
+            st.toast("✅ App memory cache flushed! Re-running screeners...", icon="🧹")
+            st.rerun()
 
 # ----------------- MAIN APP -----------------
 st.title("📈 Indian Equities & Commodities AI Screener")
@@ -4878,57 +5014,112 @@ else:
     ])
 
     with tab_search_home:
-        # Hero Banner
+        def _run_preset_screening(u_name, strat, top_limit=5):
+            with st.spinner("Syncing candles, macro indicators & computing vectorized screeners..."):
+                symbols, data_dict, results, index_results, custom_levels, elapsed, data_health, macro_context = execute_screening(
+                    u_name, "", strat, top_limit, provider_choice,
+                    breeze_api_key_in, breeze_secret_key_in, breeze_session_token_in,
+                    bypass_cache=bypass_cache_flag, cache_ttl=cache_ttl
+                )
+                st.session_state["symbols"] = symbols
+                st.session_state["data_dict"] = data_dict
+                st.session_state["cached_results"] = results
+                st.session_state["index_results"] = index_results
+                st.session_state["custom_levels"] = custom_levels
+                st.session_state["elapsed"] = elapsed
+                st.session_state["data_health"] = data_health
+                st.session_state["macro_context"] = macro_context
+                st.rerun()
+
+        # --- Sleek Hero & Readiness Banner ---
         hero_html = (
-            f'<div style="background: linear-gradient(135deg, #0f172a 0%, #1e1b4b 50%, #0f172a 100%); '
+            f'<div style="background: linear-gradient(135deg, rgba(15, 23, 42, 0.95) 0%, rgba(30, 27, 75, 0.9) 50%, rgba(15, 23, 42, 0.95) 100%); '
             f'border: 1px solid rgba(99, 102, 241, 0.35); border-left: 6px solid #6366F1; border-radius: 12px; '
-            f'padding: 24px 28px; margin-bottom: 22px; box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);">'
-            f'<div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 16px;">'
+            f'padding: 20px 24px; margin-bottom: 20px; box-shadow: 0 8px 32px rgba(0, 0, 0, 0.35);">'
+            f'<div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 14px;">'
             f'<div>'
             f'<div style="display: flex; align-items: center; gap: 10px;">'
-            f'<span style="font-size: 2rem;">🔍</span>'
-            f'<h2 style="margin: 0; color: #FFFFFF; font-size: 1.55rem; font-weight: 800; letter-spacing: 0.3px;">'
+            f'<span style="font-size: 1.6rem;">⚡</span>'
+            f'<h2 style="margin: 0; color: #FFFFFF; font-size: 1.45rem; font-weight: 800; letter-spacing: 0.3px;">'
             f'Discover High-Probability Trade Recommendations'
             f'</h2>'
             f'</div>'
-            f'<p style="margin: 8px 0 0 0; color: #CBD5E1; font-size: 0.94rem; line-height: 1.5; max-width: 820px;">'
-            f'Screen 500+ Indian Equities, Index Futures & Options, and MCX Commodities using institutional quantitative models. '
+            f'<p style="margin: 6px 0 0 0; color: #94A3B8; font-size: 0.88rem; line-height: 1.45; max-width: 800px;">'
+            f'Institutional-grade algorithmic screening across 500+ Indian Equities, Index Futures & Options, and MCX Commodities. '
             f'Review actionable AI trade plans with clear entry triggers, multi-stage targets, and tight stop losses — then '
             f'<b>backtest any setup with 1 click directly from the results</b>.'
             f'</p>'
             f'</div>'
-            f'<div style="background: rgba(99, 102, 241, 0.15); border: 1px solid rgba(99, 102, 241, 0.4); border-radius: 8px; padding: 10px 16px; text-align: center;">'
-            f'<div style="color: #A5B4FC; font-size: 0.78rem; font-weight: 700; text-transform: uppercase;">Engine Status</div>'
-            f'<div style="color: #10B981; font-size: 1.05rem; font-weight: 800; margin-top: 2px;">🟢 Ready to Scan</div>'
+            f'<div style="display: flex; gap: 10px; flex-wrap: wrap;">'
+            f'<div style="background: rgba(16, 185, 129, 0.12); border: 1px solid rgba(16, 185, 129, 0.4); border-radius: 8px; padding: 8px 14px; text-align: center;">'
+            f'<div style="color: #6EE7B7; font-size: 0.72rem; font-weight: 700; text-transform: uppercase;">Engine Feed</div>'
+            f'<div style="color: #10B981; font-size: 0.92rem; font-weight: 800;">🟢 Live Exchange</div>'
+            f'</div>'
+            f'<div style="background: rgba(99, 102, 241, 0.12); border: 1px solid rgba(99, 102, 241, 0.4); border-radius: 8px; padding: 8px 14px; text-align: center;">'
+            f'<div style="color: #A5B4FC; font-size: 0.72rem; font-weight: 700; text-transform: uppercase;">Strategy Desk</div>'
+            f'<div style="color: #818CF8; font-size: 0.92rem; font-weight: 800;">8 Active Models</div>'
+            f'</div>'
             f'</div>'
             f'</div>'
             f'</div>'
         )
         render_html(hero_html)
 
-        # 3-Step Recommendation-to-Backtest Journey Strip
-        flow_strip_html = (
-            f'<div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 14px; margin-bottom: 24px;">'
-            f'<div style="background: #1e293b; border: 1px solid #334155; border-radius: 8px; padding: 14px 16px;">'
-            f'<div style="color: #38BDF8; font-size: 0.8rem; font-weight: 800; text-transform: uppercase;">Step 1: Search Universe</div>'
-            f'<div style="color: #FFF; font-size: 1.02rem; font-weight: 700; margin: 4px 0;">Pick Stocks or Presets</div>'
-            f'<div style="color: #94A3B8; font-size: 0.82rem; line-height: 1.4;">Scan Bluechips, F&O 180+, Midcaps, or Custom Tickers across 6 quantitative technical screeners.</div>'
-            f'</div>'
-            f'<div style="background: #1e293b; border: 1px solid #334155; border-radius: 8px; padding: 14px 16px;">'
-            f'<div style="color: #A855F7; font-size: 0.8rem; font-weight: 800; text-transform: uppercase;">Step 2: AI Trade Plans</div>'
-            f'<div style="color: #FFF; font-size: 1.02rem; font-weight: 700; margin: 4px 0;">Actionable Risk Rules</div>'
-            f'<div style="color: #94A3B8; font-size: 0.82rem; line-height: 1.4;">Inspect entry triggers, T1/T2 targets, stop losses, position sizing, and macro headwinds.</div>'
-            f'</div>'
-            f'<div style="background: #1e293b; border: 1px solid #334155; border-radius: 8px; padding: 14px 16px;">'
-            f'<div style="color: #10B981; font-size: 0.8rem; font-weight: 800; text-transform: uppercase;">Step 3: 1-Click Backtesting</div>'
-            f'<div style="color: #FFF; font-size: 1.02rem; font-weight: 700; margin: 4px 0;">Verify Before Trading</div>'
-            f'<div style="color: #94A3B8; font-size: 0.82rem; line-height: 1.4;">Directly simulate the suggested strategy on that stock with zero look-ahead bias and exact Indian costs.</div>'
-            f'</div>'
-            f'</div>'
-        )
-        render_html(flow_strip_html)
+        # --- 1-Click Popular Recommendation Presets (Thematic Trading Desks) ---
+        st.markdown("#### ⚡ Popular Recommendation Presets")
+        st.caption("Quickly trigger high-conviction screening workflows with pre-tuned parameters:")
 
-        # Primary Search Form Card
+        # Top Highlight: High-Conviction Futures Desk
+        with st.container():
+            st.markdown(
+                '<div style="background: linear-gradient(135deg, rgba(30, 27, 75, 0.6) 0%, rgba(15, 23, 42, 0.8) 100%); '
+                'border: 1px solid rgba(129, 140, 248, 0.4); border-radius: 10px; padding: 12px 16px; margin-bottom: 12px;">'
+                '<div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px;">'
+                '<div>'
+                '<div style="display: flex; align-items: center; gap: 8px;">'
+                '<span style="background: #4F46E5; color: #FFF; font-size: 0.7rem; font-weight: 800; padding: 2px 7px; border-radius: 4px; text-transform: uppercase;">FEATURED DESK</span>'
+                '<span style="color: #F8FAFC; font-weight: 700; font-size: 1.0rem;">High-Conviction Futures Desk (Buy & Sell)</span>'
+                '</div>'
+                '<div style="color: #94A3B8; font-size: 0.8rem; margin-top: 3px;">Ultra-strict risk filters: Identifies F&O candidates with lowest failure rate and high asymmetry.</div>'
+                '</div>'
+                '</div>'
+                '</div>',
+                unsafe_allow_html=True
+            )
+            if st.button("⚡ High-Conviction Futures Desk (Buy & Sell)", key="preset_futures_desk", use_container_width=True, type="primary"):
+                _run_preset_screening("NSE_FO", "All Strategies", 6)
+
+        p_col1, p_col2, p_col3 = st.columns(3)
+        with p_col1:
+            st.markdown('<div style="color: #38BDF8; font-size: 0.78rem; font-weight: 700; margin-bottom: 4px;">PULLBACK ALPHA</div>', unsafe_allow_html=True)
+            if st.button("🚀 Top Dip Leaders (Pullback Alpha)", key="preset_dip_leaders", use_container_width=True):
+                _run_preset_screening("NSE_FO", "First-to-Recover Dip Leaders", 5)
+
+            st.markdown('<div style="color: #A855F7; font-size: 0.78rem; font-weight: 700; margin: 10px 0 4px 0;">SWING MOMENTUM</div>', unsafe_allow_html=True)
+            if st.button("🌊 Asymmetric Swing Setups", key="preset_swing", use_container_width=True):
+                _run_preset_screening("NIFTY_50", "Swing (Pullback & Value)", 5)
+
+        with p_col2:
+            st.markdown('<div style="color: #34D399; font-size: 0.78rem; font-weight: 700; margin-bottom: 4px;">BREAKOUT ALPHA</div>', unsafe_allow_html=True)
+            if st.button("⚡ High-Volume 52W Breakouts", key="preset_breakouts", use_container_width=True):
+                _run_preset_screening("NIFTY_50", "Breakout (Multi-Week & 52W)", 5)
+
+            st.markdown('<div style="color: #FBBF24; font-size: 0.78rem; font-weight: 700; margin: 10px 0 4px 0;">OVERNIGHT GAP-UPS</div>', unsafe_allow_html=True)
+            if st.button("🌙 BTST Overnight Momentum", key="preset_btst", use_container_width=True):
+                _run_preset_screening("NIFTY_50", "BTST (Overnight Momentum)", 5)
+
+        with p_col3:
+            st.markdown('<div style="color: #F87171; font-size: 0.78rem; font-weight: 700; margin-bottom: 4px;">DISTRIBUTION / SHORT</div>', unsafe_allow_html=True)
+            if st.button("🔴 Distribution / Breakdown (Short)", key="preset_breakdown", use_container_width=True):
+                _run_preset_screening("NSE_FO", "Breakdown (Short & Distribution)", 5)
+
+            st.markdown('<div style="color: #818CF8; font-size: 0.78rem; font-weight: 700; margin: 10px 0 4px 0;">ACTION THRESHOLDS</div>', unsafe_allow_html=True)
+            if st.button("🎯 Two-Way Breakout / Breakdown Levels", key="preset_levels", use_container_width=True):
+                _run_preset_screening("NIFTY_50", "All Strategies", 5)
+
+        st.markdown("---")
+
+        # --- Primary Custom Search Builder ---
         st.markdown("#### 🎯 Search Parameters & Customization")
         with st.form("home_search_recommendations_form", clear_on_submit=False):
             hs_c1, hs_c2, hs_c3 = st.columns([1.5, 1.5, 1.0])
@@ -4999,141 +5190,6 @@ else:
                 st.session_state["data_health"] = data_health
                 st.session_state["macro_context"] = macro_context
                 st.rerun()
-
-        st.markdown("---")
-
-        # 1-Click Popular Recommendation Presets
-        st.markdown("#### ⚡ Popular Recommendation Presets")
-        st.caption("Quickly trigger high-conviction screening workflows with pre-tuned parameters:")
-
-        p_col1, p_col2, p_col3 = st.columns(3)
-        with p_col1:
-            if st.button("🚀 Top Dip Leaders (Pullback Alpha)", key="preset_dip_leaders", use_container_width=True):
-                with st.spinner("Scanning for high-relative-strength dip recovery leaders..."):
-                    symbols, data_dict, results, index_results, custom_levels, elapsed, data_health, macro_context = execute_screening(
-                        "NSE_FO", "", "First-to-Recover Dip Leaders", 5, provider_choice,
-                        breeze_api_key_in, breeze_secret_key_in, breeze_session_token_in,
-                        bypass_cache=bypass_cache_flag, cache_ttl=cache_ttl
-                    )
-                    st.session_state["symbols"] = symbols
-                    st.session_state["data_dict"] = data_dict
-                    st.session_state["cached_results"] = results
-                    st.session_state["index_results"] = index_results
-                    st.session_state["custom_levels"] = custom_levels
-                    st.session_state["elapsed"] = elapsed
-                    st.session_state["data_health"] = data_health
-                    st.session_state["macro_context"] = macro_context
-                    st.rerun()
-
-        with p_col2:
-            if st.button("⚡ High-Volume 52W Breakouts", key="preset_breakouts", use_container_width=True):
-                with st.spinner("Scanning for 52-week & multi-week institutional breakouts..."):
-                    symbols, data_dict, results, index_results, custom_levels, elapsed, data_health, macro_context = execute_screening(
-                        "NIFTY_50", "", "Breakout (Multi-Week & 52W)", 5, provider_choice,
-                        breeze_api_key_in, breeze_secret_key_in, breeze_session_token_in,
-                        bypass_cache=bypass_cache_flag, cache_ttl=cache_ttl
-                    )
-                    st.session_state["symbols"] = symbols
-                    st.session_state["data_dict"] = data_dict
-                    st.session_state["cached_results"] = results
-                    st.session_state["index_results"] = index_results
-                    st.session_state["custom_levels"] = custom_levels
-                    st.session_state["elapsed"] = elapsed
-                    st.session_state["data_health"] = data_health
-                    st.session_state["macro_context"] = macro_context
-                    st.rerun()
-
-        with p_col3:
-            if st.button("🌙 BTST Overnight Momentum", key="preset_btst", use_container_width=True):
-                with st.spinner("Scanning for closing momentum candidates with gap-up probability..."):
-                    symbols, data_dict, results, index_results, custom_levels, elapsed, data_health, macro_context = execute_screening(
-                        "NIFTY_50", "", "BTST (Overnight Momentum)", 5, provider_choice,
-                        breeze_api_key_in, breeze_secret_key_in, breeze_session_token_in,
-                        bypass_cache=bypass_cache_flag, cache_ttl=cache_ttl
-                    )
-                    st.session_state["symbols"] = symbols
-                    st.session_state["data_dict"] = data_dict
-                    st.session_state["cached_results"] = results
-                    st.session_state["index_results"] = index_results
-                    st.session_state["custom_levels"] = custom_levels
-                    st.session_state["elapsed"] = elapsed
-                    st.session_state["data_health"] = data_health
-                    st.session_state["macro_context"] = macro_context
-                    st.rerun()
-
-        p_col4, p_col5, p_col6 = st.columns(3)
-        with p_col4:
-            if st.button("🎯 Two-Way Breakout / Breakdown Levels", key="preset_levels", use_container_width=True):
-                with st.spinner("Calculating institutional rise/fall boundary thresholds..."):
-                    symbols, data_dict, results, index_results, custom_levels, elapsed, data_health, macro_context = execute_screening(
-                        "NIFTY_50", "", "All Strategies", 5, provider_choice,
-                        breeze_api_key_in, breeze_secret_key_in, breeze_session_token_in,
-                        bypass_cache=bypass_cache_flag, cache_ttl=cache_ttl
-                    )
-                    st.session_state["symbols"] = symbols
-                    st.session_state["data_dict"] = data_dict
-                    st.session_state["cached_results"] = results
-                    st.session_state["index_results"] = index_results
-                    st.session_state["custom_levels"] = custom_levels
-                    st.session_state["elapsed"] = elapsed
-                    st.session_state["data_health"] = data_health
-                    st.session_state["macro_context"] = macro_context
-                    st.rerun()
-
-        with p_col5:
-            if st.button("🌊 Asymmetric Swing Setups", key="preset_swing", use_container_width=True):
-                with st.spinner("Screening for pullback setups at key dynamic supports..."):
-                    symbols, data_dict, results, index_results, custom_levels, elapsed, data_health, macro_context = execute_screening(
-                        "NIFTY_50", "", "Swing (Pullback & Value)", 5, provider_choice,
-                        breeze_api_key_in, breeze_secret_key_in, breeze_session_token_in,
-                        bypass_cache=bypass_cache_flag, cache_ttl=cache_ttl
-                    )
-                    st.session_state["symbols"] = symbols
-                    st.session_state["data_dict"] = data_dict
-                    st.session_state["cached_results"] = results
-                    st.session_state["index_results"] = index_results
-                    st.session_state["custom_levels"] = custom_levels
-                    st.session_state["elapsed"] = elapsed
-                    st.session_state["data_health"] = data_health
-                    st.session_state["macro_context"] = macro_context
-                    st.rerun()
-
-        with p_col6:
-            if st.button("🔴 Distribution / Breakdown (Short)", key="preset_breakdown", use_container_width=True):
-                with st.spinner("Screening for breakdown candidates and put option plays..."):
-                    symbols, data_dict, results, index_results, custom_levels, elapsed, data_health, macro_context = execute_screening(
-                        "NSE_FO", "", "Breakdown (Short & Distribution)", 5, provider_choice,
-                        breeze_api_key_in, breeze_secret_key_in, breeze_session_token_in,
-                        bypass_cache=bypass_cache_flag, cache_ttl=cache_ttl
-                    )
-                    st.session_state["symbols"] = symbols
-                    st.session_state["data_dict"] = data_dict
-                    st.session_state["cached_results"] = results
-                    st.session_state["index_results"] = index_results
-                    st.session_state["custom_levels"] = custom_levels
-                    st.session_state["elapsed"] = elapsed
-                    st.session_state["data_health"] = data_health
-                    st.session_state["macro_context"] = macro_context
-                    st.rerun()
-
-        p_col7, _ = st.columns([1, 1])
-        with p_col7:
-            if st.button("⚡ High-Conviction Futures Desk (Buy & Sell)", key="preset_futures_desk", use_container_width=True, type="primary"):
-                with st.spinner("Screening F&O universe for lowest-failure-rate Buy & Sell futures setups..."):
-                    symbols, data_dict, results, index_results, custom_levels, elapsed, data_health, macro_context = execute_screening(
-                        "NSE_FO", "", "All Strategies", 6, provider_choice,
-                        breeze_api_key_in, breeze_secret_key_in, breeze_session_token_in,
-                        bypass_cache=bypass_cache_flag, cache_ttl=cache_ttl
-                    )
-                    st.session_state["symbols"] = symbols
-                    st.session_state["data_dict"] = data_dict
-                    st.session_state["cached_results"] = results
-                    st.session_state["index_results"] = index_results
-                    st.session_state["custom_levels"] = custom_levels
-                    st.session_state["elapsed"] = elapsed
-                    st.session_state["data_health"] = data_health
-                    st.session_state["macro_context"] = macro_context
-                    st.rerun()
 
     with tab_indep_bt_home:
         st.markdown("### 🧪 Independent Strategy Backtesting & Research")
