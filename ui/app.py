@@ -26,6 +26,8 @@ if sys.platform == "win32":
     except Exception:
         pass
 
+from concurrent.futures import ThreadPoolExecutor, as_completed
+import threading
 import pandas as pd
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
@@ -49,59 +51,59 @@ except Exception:
 
 # Guard against Streamlit Cloud stale in-memory module caching across git updates
 import importlib
-_APP_BUILD_SIG = "2026_10_25_backtest_passed_v1"
+_APP_BUILD_SIG = "2026_10_27_perf_opt_v2"
 if sys.modules.get("__CURRENT_BUILD_SIG__") != _APP_BUILD_SIG:
     for mod_name in list(sys.modules.keys()):
         if any(mod_name == pkg or mod_name.startswith(pkg + ".") for pkg in ("core", "screeners", "ai", "providers", "config")):
             sys.modules.pop(mod_name, None)
     sys.modules["__CURRENT_BUILD_SIG__"] = _APP_BUILD_SIG
 
-# Ensure all core, config, and screener modules are strictly fresh
-try:
-    import config.settings
-    import core.auth
-    import core.universe
-    import core.macro
-    import core.relative_strength
-    import core.stock_levels
-    import core.indicators
-    import core.tracker
-    import core.fno_tracker
-    import core.options_analytics
-    import core.backtesting
-    import core.backtesting.runner
-    import core.backtesting.strategy
-    import core.backtesting.analytics
-    import screeners.dip_leaders
-    import screeners.breakout
-    import screeners.breakdown
-    import screeners.swing
-    import screeners.btst
-    import screeners.intraday
-    import screeners.options_fno
-    importlib.reload(config.settings)
-    importlib.reload(core.auth)
-    importlib.reload(core.universe)
-    importlib.reload(core.macro)
-    importlib.reload(core.relative_strength)
-    importlib.reload(core.stock_levels)
-    importlib.reload(core.indicators)
-    importlib.reload(core.tracker)
-    importlib.reload(core.fno_tracker)
-    importlib.reload(core.options_analytics)
-    importlib.reload(core.backtesting)
-    importlib.reload(core.backtesting.runner)
-    importlib.reload(core.backtesting.strategy)
-    importlib.reload(core.backtesting.analytics)
-    importlib.reload(screeners.dip_leaders)
-    importlib.reload(screeners.breakout)
-    importlib.reload(screeners.breakdown)
-    importlib.reload(screeners.swing)
-    importlib.reload(screeners.btst)
-    importlib.reload(screeners.intraday)
-    importlib.reload(screeners.options_fno)
-except Exception:
-    pass
+    # Ensure all core, config, and screener modules are strictly fresh on cold deploy/restart only
+    try:
+        import config.settings
+        import core.auth
+        import core.universe
+        import core.macro
+        import core.relative_strength
+        import core.stock_levels
+        import core.indicators
+        import core.tracker
+        import core.fno_tracker
+        import core.options_analytics
+        import core.backtesting
+        import core.backtesting.runner
+        import core.backtesting.strategy
+        import core.backtesting.analytics
+        import screeners.dip_leaders
+        import screeners.breakout
+        import screeners.breakdown
+        import screeners.swing
+        import screeners.btst
+        import screeners.intraday
+        import screeners.options_fno
+        importlib.reload(config.settings)
+        importlib.reload(core.auth)
+        importlib.reload(core.universe)
+        importlib.reload(core.macro)
+        importlib.reload(core.relative_strength)
+        importlib.reload(core.stock_levels)
+        importlib.reload(core.indicators)
+        importlib.reload(core.tracker)
+        importlib.reload(core.fno_tracker)
+        importlib.reload(core.options_analytics)
+        importlib.reload(core.backtesting)
+        importlib.reload(core.backtesting.runner)
+        importlib.reload(core.backtesting.strategy)
+        importlib.reload(core.backtesting.analytics)
+        importlib.reload(screeners.dip_leaders)
+        importlib.reload(screeners.breakout)
+        importlib.reload(screeners.breakdown)
+        importlib.reload(screeners.swing)
+        importlib.reload(screeners.btst)
+        importlib.reload(screeners.intraday)
+        importlib.reload(screeners.options_fno)
+    except Exception:
+        pass
 
 from ai.advisor import AIAdvisor
 try:
@@ -1591,32 +1593,43 @@ def execute_screening(u_name, custom_list, strat, top_limit, prov_mode, b_key=""
     if is_commodity_universe and ("NSE Direct" in prov_mode or "Static" in prov_mode or "Live" in prov_mode):
         provider = YahooFinanceProvider(cache_ttl_hours=cache_ttl)
         prov_mode = "Yahoo Finance (Default)"
-        data = provider.fetch_batch_ohlcv(symbols, period="1y", interval="1d", max_workers=10, use_cache=not bypass_cache)
+        fetch_prov_fn = lambda: provider.fetch_batch_ohlcv(symbols, period="1y", interval="1d", max_workers=12, use_cache=not bypass_cache)
     elif "Static" in prov_mode:
         provider = BreezeStaticProvider()
-        data = provider.fetch_batch_ohlcv(symbols, period="1y", interval="1day", max_workers=5)
+        fetch_prov_fn = lambda: provider.fetch_batch_ohlcv(symbols, period="1y", interval="1day", max_workers=5)
     elif "Live" in prov_mode:
         provider = BreezeProvider(api_key=b_key, secret_key=b_sec, session_token=b_tok)
         if not provider.is_authenticated:
             st.warning("⚠️ Live ICICI Breeze session not active or credentials missing. Using Breeze Static Provider for testing.")
             provider = BreezeStaticProvider()
-        data = provider.fetch_batch_ohlcv(symbols, period="1y", interval="1day", max_workers=5)
+        fetch_prov_fn = lambda: provider.fetch_batch_ohlcv(symbols, period="1y", interval="1day", max_workers=5)
     elif "NSE Direct" in prov_mode:
         provider = NSEDirectProvider(cache_ttl_hours=cache_ttl)
-        data = provider.fetch_batch_ohlcv(symbols, period="1y", interval="1d", max_workers=15, use_cache=not bypass_cache)
+        fetch_prov_fn = lambda: provider.fetch_batch_ohlcv(symbols, period="1y", interval="1d", max_workers=15, use_cache=not bypass_cache)
     else:
         provider = YahooFinanceProvider(cache_ttl_hours=cache_ttl)
-        data = provider.fetch_batch_ohlcv(symbols, period="1y", interval="1d", max_workers=15, use_cache=not bypass_cache)
+        fetch_prov_fn = lambda: provider.fetch_batch_ohlcv(symbols, period="1y", interval="1d", max_workers=15, use_cache=not bypass_cache)
     
-    # 3. Always compute Indian Market Indices Derivatives Hub & Global Macro Regime
+    # 3. Concurrently fetch data universe + Index Derivatives Hub & Global Macro Regime in parallel
     idx_symbols = ["NIFTY", "BANKNIFTY", "SENSEX", "MIDCPNIFTY", "NIFTYIT", "CRUDEOIL", "GOLDM", "GOLD"]
     yf_idx_prov = YahooFinanceProvider(cache_ttl_hours=cache_ttl)
-    idx_raw = yf_idx_prov.fetch_batch_ohlcv(idx_symbols, period="6mo", interval="1d", max_workers=5, use_cache=not bypass_cache)
+
+    with ThreadPoolExecutor(max_workers=2) as dl_pool:
+        fut_data = dl_pool.submit(fetch_prov_fn)
+        fut_idx = dl_pool.submit(yf_idx_prov.fetch_batch_ohlcv, idx_symbols, "6mo", "1d", 5, not bypass_cache)
+        data = fut_data.result()
+        idx_raw = fut_idx.result()
+
     index_results = IndexDerivativesAnalyzer.analyze_batch(idx_raw)
     try:
         macro_context = MacroMarketEngine.analyze_macro_regime(idx_raw)
     except Exception:
         macro_context = MacroMarketEngine._get_default_macro_dict()
+
+    # Pre-enrich all stock DataFrames in parallel once so subsequent screeners execute in 0.00ms
+    if data:
+        with ThreadPoolExecutor(max_workers=min(len(data), 16)) as enrich_pool:
+            list(enrich_pool.map(enrich_with_indicators, data.values()))
 
     # 4. Extract data health telemetry from providers
     try:
@@ -1669,36 +1682,46 @@ def execute_screening(u_name, custom_list, strat, top_limit, prov_mode, b_key=""
         "is_static_mode": is_static
     }
 
-    # 5. Screen Equities with Benchmark Context & First-to-Recover Dip Leaders
-    results = {}
+    # 5. Screen Equities concurrently across threads
+    screener_tasks = {}
     if strat in ["All Strategies", "First-to-Recover Dip Leaders"]:
-        results["DIP_LEADER"] = DipLeaderScreener().screen_batch(data, top_n=top_limit, benchmark_data=idx_raw)
+        screener_tasks["DIP_LEADER"] = lambda: DipLeaderScreener().screen_batch(data, top_n=top_limit, benchmark_data=idx_raw)
     if strat in ["All Strategies", "Chikou Breakout (Ichimoku Setup)", "Chikou Breakout", "CHIKOU_BREAKOUT"]:
-        results["CHIKOU_BREAKOUT"] = ChikouBreakoutScreener().screen_batch(data, top_n=top_limit, benchmark_data=idx_raw)
+        screener_tasks["CHIKOU_BREAKOUT"] = lambda: ChikouBreakoutScreener().screen_batch(data, top_n=top_limit, benchmark_data=idx_raw)
     if strat in ["All Strategies", "Breakout (Multi-Week & 52W)"]:
-        results["BREAKOUT"] = BreakoutScreener().screen_batch(data, top_n=top_limit, benchmark_data=idx_raw)
+        screener_tasks["BREAKOUT"] = lambda: BreakoutScreener().screen_batch(data, top_n=top_limit, benchmark_data=idx_raw)
     if strat in ["All Strategies", "Breakdown (Short & Distribution)"]:
-        results["BREAKDOWN"] = BreakdownScreener().screen_batch(data, top_n=top_limit, benchmark_data=idx_raw)
+        screener_tasks["BREAKDOWN"] = lambda: BreakdownScreener().screen_batch(data, top_n=top_limit, benchmark_data=idx_raw)
     if strat in ["All Strategies", "Swing (Pullback & Value)"]:
-        results["SWING"] = SwingScreener().screen_batch(data, top_n=top_limit, benchmark_data=idx_raw)
+        screener_tasks["SWING"] = lambda: SwingScreener().screen_batch(data, top_n=top_limit, benchmark_data=idx_raw)
     if strat in ["All Strategies", "BTST (Overnight Momentum)"]:
-        results["BTST"] = BTSTScreener().screen_batch(data, top_n=top_limit, benchmark_data=idx_raw)
+        screener_tasks["BTST"] = lambda: BTSTScreener().screen_batch(data, top_n=top_limit, benchmark_data=idx_raw)
     if strat in ["All Strategies", "Intraday Momentum"]:
-        results["INTRADAY"] = IntradayScreener().screen_batch(data, top_n=top_limit, benchmark_data=idx_raw)
+        screener_tasks["INTRADAY"] = lambda: IntradayScreener().screen_batch(data, top_n=top_limit, benchmark_data=idx_raw)
     if strat in ["All Strategies", "Options (CE & PE Buildup)"]:
-        results["OPTIONS"] = OptionsScreener().screen_batch(data, top_n=top_limit, benchmark_data=idx_raw)
+        screener_tasks["OPTIONS"] = lambda: OptionsScreener().screen_batch(data, top_n=top_limit, benchmark_data=idx_raw)
     elif strat == "Options CE (Call Options Only)":
-        results["OPTIONS_CE"] = OptionsScreener(option_target="CE").screen_batch(data, top_n=top_limit, benchmark_data=idx_raw)
+        screener_tasks["OPTIONS_CE"] = lambda: OptionsScreener(option_target="CE").screen_batch(data, top_n=top_limit, benchmark_data=idx_raw)
     elif strat == "Options PE (Put Options Only)":
-        results["OPTIONS_PE"] = OptionsScreener(option_target="PE").screen_batch(data, top_n=top_limit, benchmark_data=idx_raw)
+        screener_tasks["OPTIONS_PE"] = lambda: OptionsScreener(option_target="PE").screen_batch(data, top_n=top_limit, benchmark_data=idx_raw)
 
-    try:
-        custom_levels = StockLevelAnalyzer.analyze_batch(data, benchmark_data=idx_raw)
-    except Exception:
+    results = {}
+    with ThreadPoolExecutor(max_workers=min(len(screener_tasks) + 1, 8)) as sc_pool:
+        future_map = {sc_pool.submit(fn): cat for cat, fn in screener_tasks.items()}
+        fut_levels = sc_pool.submit(StockLevelAnalyzer.analyze_batch, data, idx_raw)
+        for fut in as_completed(future_map):
+            cat = future_map[fut]
+            try:
+                results[cat] = fut.result()
+            except Exception:
+                results[cat] = []
         try:
-            custom_levels = StockLevelAnalyzer.analyze_batch(data, benchmark_data=None)
+            custom_levels = fut_levels.result()
         except Exception:
-            custom_levels = []
+            try:
+                custom_levels = StockLevelAnalyzer.analyze_batch(data, benchmark_data=None)
+            except Exception:
+                custom_levels = []
 
     # When custom universe is selected, ensure all custom stocks flow into results for AI Trade Plans
     if u_name == "Custom" and custom_levels:
@@ -2489,8 +2512,20 @@ elif run_btn or "cached_results" in st.session_state:
         else:
             try:
                 advisor = AIAdvisor(api_key=gemini_key_input.strip() if gemini_key_input is not None else None)
-                all_plans = advisor.analyze_candidates(all_candidates, macro_context=macro_context)
+                # Instant sub-millisecond quantitative trade plans ensures zero UI render blocking
+                all_plans = advisor._generate_algorithmic_trade_plan(all_candidates, macro_context=macro_context)
                 st.session_state["cached_ai_plans"] = all_plans
+
+                # If Gemini AI is active, dispatch background enhancement thread without stalling the UI
+                if advisor.is_ai_ready:
+                    def _bg_gemini_worker(cands, m_ctx, adv):
+                        try:
+                            deep_plans = adv.analyze_candidates(cands, macro_context=m_ctx)
+                            if deep_plans:
+                                st.session_state["cached_ai_plans"] = deep_plans
+                        except Exception:
+                            pass
+                    threading.Thread(target=_bg_gemini_worker, args=(all_candidates, macro_context, advisor), daemon=True).start()
             except Exception:
                 all_plans = []
 

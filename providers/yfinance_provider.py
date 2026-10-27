@@ -175,11 +175,15 @@ class YahooFinanceProvider(BaseDataProvider):
         if use_cache:
             cached_df = self.cache.get(clean_symbol)
             if cached_df is not None and len(cached_df) >= 30:
-                # Synchronize today's candle with live exchange quote during trading sessions
+                # Synchronize today's candle with live exchange quote during trading sessions only if cache is older than 3 minutes
                 now_ist = datetime.now(ist_tz)
-                if now_ist.weekday() < 5 and now_ist.hour >= 9:
+                mtime = self.cache.get_mtime(clean_symbol)
+                file_age_sec = (time.time() - mtime) if mtime else 999999.0
+
+                if now_ist.weekday() < 5 and now_ist.hour >= 9 and file_age_sec > 180.0:
                     try:
                         cached_df = self._sync_intraday_candle(clean_symbol, cached_df)
+                        self.cache.save(clean_symbol, cached_df)
                     except Exception:
                         pass
 

@@ -121,29 +121,62 @@ def compute_macd(close: pd.Series, fast: int = 12, slow: int = 26, signal: int =
 def compute_aroon(high: pd.Series, low: pd.Series, length: int = 25) -> pd.DataFrame:
     """
     Aroon Indicator & Aroon Oscillator (Tushar Chande).
-    Measures trend strength and anticipation of breakout/reversals.
+    Vectorized implementation using sliding window views for high-throughput screening.
     Aroon Up = ((length - periods since highest high) / length) * 100
     Aroon Down = ((length - periods since lowest low) / length) * 100
     Aroon Oscillator = Aroon Up - Aroon Down. Values > +50 indicate strong bullish trend.
     """
-    def _periods_since_max(x):
-        return (len(x) - 1) - int(np.argmax(x))
+    n = len(high)
+    if n < length:
+        return pd.DataFrame({
+            "aroon_up": pd.Series(np.nan, index=high.index),
+            "aroon_down": pd.Series(np.nan, index=high.index),
+            "aroon_osc": pd.Series(np.nan, index=high.index)
+        }, index=high.index)
 
-    def _periods_since_min(x):
-        return (len(x) - 1) - int(np.argmin(x))
+    try:
+        high_vals = np.asarray(high.values, dtype=float)
+        low_vals = np.asarray(low.values, dtype=float)
 
-    high_idx = high.rolling(window=length, min_periods=length).apply(_periods_since_max, raw=True)
-    low_idx = low.rolling(window=length, min_periods=length).apply(_periods_since_min, raw=True)
+        # High windows
+        w_high = np.lib.stride_tricks.sliding_window_view(high_vals, window_shape=length)
+        high_idx = (length - 1) - np.argmax(w_high, axis=-1)
 
-    aroon_up = ((length - high_idx) / float(length)) * 100.0
-    aroon_down = ((length - low_idx) / float(length)) * 100.0
-    aroon_osc = aroon_up - aroon_down
+        # Low windows
+        w_low = np.lib.stride_tricks.sliding_window_view(low_vals, window_shape=length)
+        low_idx = (length - 1) - np.argmin(w_low, axis=-1)
 
-    return pd.DataFrame({
-        "aroon_up": aroon_up,
-        "aroon_down": aroon_down,
-        "aroon_osc": aroon_osc
-    }, index=high.index)
+        aroon_up_arr = np.full(n, np.nan)
+        aroon_down_arr = np.full(n, np.nan)
+        aroon_up_arr[length - 1:] = ((length - high_idx) / float(length)) * 100.0
+        aroon_down_arr[length - 1:] = ((length - low_idx) / float(length)) * 100.0
+        aroon_osc_arr = aroon_up_arr - aroon_down_arr
+
+        return pd.DataFrame({
+            "aroon_up": aroon_up_arr,
+            "aroon_down": aroon_down_arr,
+            "aroon_osc": aroon_osc_arr
+        }, index=high.index)
+    except Exception:
+        # Fallback to rolling apply if stride tricks encounter unexpected slice layout
+        def _periods_since_max(x):
+            return (len(x) - 1) - int(np.argmax(x))
+
+        def _periods_since_min(x):
+            return (len(x) - 1) - int(np.argmin(x))
+
+        h_idx = high.rolling(window=length, min_periods=length).apply(_periods_since_max, raw=True)
+        l_idx = low.rolling(window=length, min_periods=length).apply(_periods_since_min, raw=True)
+
+        aroon_up = ((length - h_idx) / float(length)) * 100.0
+        aroon_down = ((length - l_idx) / float(length)) * 100.0
+        aroon_osc = aroon_up - aroon_down
+
+        return pd.DataFrame({
+            "aroon_up": aroon_up,
+            "aroon_down": aroon_down,
+            "aroon_osc": aroon_osc
+        }, index=high.index)
 
 
 def compute_ichimoku(
@@ -236,6 +269,10 @@ def enrich_with_indicators(df: pd.DataFrame) -> pd.DataFrame:
         and Chikou Span Open Space detection for Chikou Breakout setups.
     """
     if df is None or len(df) < 20:
+        return df
+
+    # Fast-path: return immediately if indicators are already computed
+    if "rsi_14" in df.columns and "ema_20" in df.columns and "aroon_osc" in df.columns and "kumo_top" in df.columns:
         return df
 
     # Trend EMAs & SMAs: Stage analysis and dynamic support/resistance
