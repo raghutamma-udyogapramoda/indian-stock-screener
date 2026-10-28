@@ -70,6 +70,7 @@ if sys.modules.get("__CURRENT_BUILD_SIG__") != _APP_BUILD_SIG:
         import core.tracker
         import core.fno_tracker
         import core.options_analytics
+        import core.results_scanner
         import core.backtesting
         import core.backtesting.runner
         import core.backtesting.strategy
@@ -91,6 +92,7 @@ if sys.modules.get("__CURRENT_BUILD_SIG__") != _APP_BUILD_SIG:
         importlib.reload(core.tracker)
         importlib.reload(core.fno_tracker)
         importlib.reload(core.options_analytics)
+        importlib.reload(core.results_scanner)
         importlib.reload(core.backtesting)
         importlib.reload(core.backtesting.runner)
         importlib.reload(core.backtesting.strategy)
@@ -130,6 +132,7 @@ from core.tracker import PortfolioTracker
 from core.universe import UniverseManager, NSE_FO_SEED
 from core.indicators import enrich_with_indicators
 from core.stock_levels import StockLevelAnalyzer
+from core.results_scanner import ResultsCalendarManager, ResultsChartPredictor
 from providers.breeze_provider import BreezeProvider
 from providers.breeze_static_provider import BreezeStaticProvider
 from providers.nse_direct_provider import NSEDirectProvider
@@ -1519,41 +1522,310 @@ def render_item_tracker_view(current_user: str, data_dict: Dict[str, pd.DataFram
     render_live_tracked_positions_fragment(target_user=target_user, data_dict=data_dict)
 
 
-# Custom Styling
-st.markdown("""
-<style>
-    .metric-card {
-        background-color: #1a1e24;
-        border-radius: 8px;
-        padding: 16px;
-        margin-bottom: 12px;
-        border-left: 5px solid #2962FF;
-    }
-    .badge-buy {
-        background-color: #00E676;
-        color: #000;
-        padding: 4px 10px;
-        border-radius: 4px;
-        font-weight: bold;
-        font-size: 0.85rem;
-    }
-    .badge-sell {
-        background-color: #FF5252;
-        color: #FFF;
-        padding: 4px 10px;
-        border-radius: 4px;
-        font-weight: bold;
-        font-size: 0.85rem;
-    }
-    .stTabs [data-baseweb="tab-list"] {
-        gap: 12px;
-    }
-    .stTabs [data-baseweb="tab"] {
-        padding: 8px 16px;
-        border-radius: 6px;
-    }
-</style>
-""", unsafe_allow_html=True)
+def plot_results_next_day_chart(symbol: str, df: pd.DataFrame, pred: Dict[str, Any]):
+    """Renders high-definition candlestick chart with next-day expected volatility bands and triggers."""
+    if df is None or len(df) == 0:
+        st.info("Chart data not available for this ticker.")
+        return
+
+    recent = df.tail(60).copy()
+    fig = go.Figure()
+
+    # Candlestick trace
+    fig.add_trace(go.Candlestick(
+        x=recent.index,
+        open=recent['open'],
+        high=recent['high'],
+        low=recent['low'],
+        close=recent['close'],
+        name="Price",
+        increasing_line_color="#00E676",
+        decreasing_line_color="#FF5252"
+    ))
+
+    # Moving Averages
+    if "ema_20" in recent.columns:
+        fig.add_trace(go.Scatter(
+            x=recent.index, y=recent["ema_20"],
+            name="20 EMA", line=dict(color="#38BDF8", width=1.5)
+        ))
+    if "ema_50" in recent.columns:
+        fig.add_trace(go.Scatter(
+            x=recent.index, y=recent["ema_50"],
+            name="50 EMA", line=dict(color="#F59E0B", width=1.5)
+        ))
+
+    # Next-Day Expected Move Range Band (Upper & Lower)
+    upper_band = pred.get("upper_band", 0)
+    lower_band = pred.get("lower_band", 0)
+    buy_trigger = pred.get("buy_trigger", 0)
+    sell_trigger = pred.get("sell_trigger", 0)
+
+    if upper_band > 0:
+        fig.add_hline(
+            y=upper_band, line_dash="dash", line_color="#10B981", line_width=1.5,
+            annotation_text=f"Expected Next-Day High: ₹{upper_band:,.2f} (+{pred.get('expected_move_pct', 0)}%)",
+            annotation_position="top right", annotation_font_color="#10B981"
+        )
+    if lower_band > 0:
+        fig.add_hline(
+            y=lower_band, line_dash="dash", line_color="#EF4444", line_width=1.5,
+            annotation_text=f"Expected Next-Day Low: ₹{lower_band:,.2f} (-{pred.get('expected_move_pct', 0)}%)",
+            annotation_position="bottom right", annotation_font_color="#EF4444"
+        )
+    if buy_trigger > 0:
+        fig.add_hline(
+            y=buy_trigger, line_dash="dot", line_color="#FBBF24", line_width=1.5,
+            annotation_text=f"Upside Breakout Trigger: ₹{buy_trigger:,.2f}",
+            annotation_position="top left", annotation_font_color="#FBBF24"
+        )
+    if sell_trigger > 0:
+        fig.add_hline(
+            y=sell_trigger, line_dash="dot", line_color="#FB7185", line_width=1.5,
+            annotation_text=f"Downside Breakdown Trigger: ₹{sell_trigger:,.2f}",
+            annotation_position="bottom left", annotation_font_color="#FB7185"
+        )
+
+    fig.update_layout(
+        title=f"{symbol} — Next-Day Price Trajectory & Expected Earnings Range",
+        template="plotly_dark",
+        height=390,
+        margin=dict(l=10, r=10, t=35, b=10),
+        xaxis_rangeslider_visible=False,
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
+    )
+    st.plotly_chart(fig, use_container_width=True)
+
+
+def render_recent_results_scanner_view(data_dict: Dict[str, pd.DataFrame] = None, prefix: str = "dash"):
+    """
+    Renders the Corporate Results & Earnings Scanner section.
+    Users can inspect stocks with declared or upcoming results for the current/next week.
+    Displays stocks as clean interactive cards showing names only.
+    Provides technical next-day price movement derivations, volatility bands, financial scorecards,
+    and institutional insights.
+    """
+    if data_dict is None:
+        data_dict = {}
+
+    st.markdown("### 📢 Corporate Results & Earnings Scanner")
+    st.caption(
+        "Screen Indian Equities reporting quarterly financial results in the current or upcoming week. "
+        "Select any stock card below to derive next-day candlestick price action, expected volatility bands, "
+        "breakout triggers, and institutional earnings commentary."
+    )
+
+    all_catalog = ResultsCalendarManager.get_all_results_catalog()
+    declared_stocks = ResultsCalendarManager.get_declared_stocks()
+    this_week_stocks = ResultsCalendarManager.get_upcoming_this_week()
+    next_week_stocks = ResultsCalendarManager.get_upcoming_next_week()
+
+    # Timeline Filter Chips
+    cat_tabs = st.radio(
+        "Earnings Timeline Filter",
+        [
+            f"🌟 All Results ({len(all_catalog)})",
+            f"🟢 Recently Declared ({len(declared_stocks)})",
+            f"⏳ Declaring This Week ({len(this_week_stocks)})",
+            f"📅 Declaring Next Week ({len(next_week_stocks)})"
+        ],
+        horizontal=True,
+        key=f"res_timeline_filter_{prefix}",
+        label_visibility="collapsed"
+    )
+
+    if "Recently Declared" in cat_tabs:
+        displayed_stocks = declared_stocks
+    elif "This Week" in cat_tabs:
+        displayed_stocks = this_week_stocks
+    elif "Next Week" in cat_tabs:
+        displayed_stocks = next_week_stocks
+    else:
+        displayed_stocks = all_catalog
+
+    # Initialize selected symbol in session state
+    state_key = f"res_selected_symbol_{prefix}"
+    if state_key not in st.session_state:
+        default_sym = displayed_stocks[0]["symbol"] if displayed_stocks else "RELIANCE"
+        st.session_state[state_key] = default_sym
+
+    current_sym = st.session_state.get(state_key, "RELIANCE")
+
+    # Render Cards on UI with ONLY names
+    st.markdown("##### 📌 Select Stock to Inspect Next-Day Chart & Earnings Insights:")
+    cols_per_row = 6
+    if displayed_stocks:
+        for row_start in range(0, len(displayed_stocks), cols_per_row):
+            row_items = displayed_stocks[row_start:row_start + cols_per_row]
+            cols = st.columns(cols_per_row)
+            for idx, s in enumerate(row_items):
+                sym = s["symbol"]
+                is_selected = (sym == current_sym)
+                btn_type = "primary" if is_selected else "secondary"
+                # Card button with name only
+                if cols[idx].button(f"**{sym}**", key=f"res_card_{sym}_{prefix}_{row_start}", use_container_width=True, type=btn_type):
+                    st.session_state[state_key] = sym
+                    st.rerun()
+
+    # Custom ticker search / lookup input
+    with st.expander("🔍 Or Inspect Custom Ticker (Any NSE/BSE Stock)", expanded=False):
+        c_in_col1, c_in_col2 = st.columns([2, 1])
+        custom_in = c_in_col1.text_input("Enter Ticker Symbol:", placeholder="e.g. ZOMATO, TMPV, HAL, BEL", key=f"custom_res_txt_{prefix}")
+        if c_in_col2.button("Inspect Ticker", key=f"btn_inspect_custom_res_{prefix}", use_container_width=True):
+            if custom_in:
+                st.session_state[state_key] = custom_in.strip().upper()
+                st.rerun()
+
+    selected_sym = st.session_state.get(state_key, "RELIANCE")
+    s_meta = ResultsCalendarManager.get_stock_result_details(selected_sym)
+
+    # Load OHLCV for technical derivation
+    df = data_dict.get(selected_sym)
+    if df is None:
+        # Load from YahooFinanceProvider with caching
+        yf_prov = YahooFinanceProvider(cache_ttl_hours=1.0)
+        df = yf_prov.fetch_ohlcv(selected_sym, period="6mo", interval="1d", use_cache=True)
+        if df is not None:
+            df = enrich_with_indicators(df)
+            data_dict[selected_sym] = df
+
+    pred = ResultsChartPredictor.analyze_next_day_chart_move(df, s_meta)
+    is_declared = s_meta.get("status") == "DECLARED"
+
+    # Status & Header Strip
+    status_pill = (
+        f'<span style="background: rgba(16, 185, 129, 0.2); color: #34D399; border: 1px solid #10B981; '
+        f'padding: 4px 10px; border-radius: 9999px; font-weight: 700; font-size: 0.8rem;">'
+        f'🟢 DECLARED: {s_meta.get("declared_date", "Recently")} ({s_meta.get("quarter", "Q2 FY25")})</span>'
+        if is_declared else
+        f'<span style="background: rgba(245, 158, 11, 0.2); color: #FBBF24; border: 1px solid #F59E0B; '
+        f'padding: 4px 10px; border-radius: 9999px; font-weight: 700; font-size: 0.8rem;">'
+        f'⏳ SCHEDULED: {s_meta.get("expected_date", "Next Week")} ({s_meta.get("timing_window", "Upcoming").replace("_", " ")})</span>'
+    )
+
+    header_html = (
+        f'<div style="background: linear-gradient(135deg, rgba(30, 41, 59, 0.85) 0%, rgba(15, 23, 42, 0.95) 100%); '
+        f'border: 1px solid rgba(99, 102, 241, 0.4); border-left: 6px solid #6366F1; border-radius: 10px; '
+        f'padding: 14px 18px; margin: 16px 0 14px 0;">'
+        f'<div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px;">'
+        f'<div>'
+        f'<div style="display: flex; align-items: center; gap: 10px;">'
+        f'<span style="font-size: 1.35rem; font-weight: 800; color: #FFFFFF;">{selected_sym}</span>'
+        f'<span style="color: #CBD5E1; font-size: 0.95rem; font-weight: 600;">{s_meta.get("company_name", selected_sym)}</span>'
+        f'<span style="background: rgba(51, 65, 85, 0.6); color: #94A3B8; padding: 2px 8px; border-radius: 4px; font-size: 0.75rem;">{s_meta.get("sector", "Equities")}</span>'
+        f'</div>'
+        f'<div style="color: #94A3B8; font-size: 0.82rem; margin-top: 4px;">{s_meta.get("summary", "")}</div>'
+        f'</div>'
+        f'<div>{status_pill}</div>'
+        f'</div>'
+        f'</div>'
+    )
+    render_html(header_html)
+
+    # ----------------- SECTION 1: CHART & NEXT-DAY TECHNICAL MOVE DERIVATION -----------------
+    st.markdown("#### 📈 Next-Day Candlestick Trajectory & Action Triggers")
+    st.caption("Derived from multi-timeframe moving averages, Bollinger bandwidth squeeze, institutional RVOL, and earnings volatility.")
+
+    # Top KPI Metrics Row
+    k1, k2, k3, k4 = st.columns(4)
+    k1.metric("Next-Day Directional Bias", pred["bias_label"], delta=f"{pred['bullish_probability']}% Bullish Prob")
+    k2.metric("Current Close (LTP)", f"₹{pred['current_price']:,.2f}", delta=f"RSI: {pred['rsi']:.1f}")
+    k3.metric("Expected Results Move", f"±₹{pred['expected_move_pts']:.2f}", delta=f"±{pred['expected_move_pct']:.2f}%")
+    k4.metric("Expected Volatility Band", f"₹{pred['lower_band']:,.0f} — ₹{pred['upper_band']:,.0f}", delta="1.7x ATR")
+
+    # Actionable Triggers Strip
+    trig_c1, trig_c2, trig_c3 = st.columns(3)
+    with trig_c1:
+        st.markdown(
+            f'<div style="background: rgba(16, 185, 129, 0.08); border: 1px solid rgba(16, 185, 129, 0.35); border-left: 4px solid #10B981; border-radius: 8px; padding: 10px 14px;">'
+            f'<div style="color: #34D399; font-size: 0.78rem; font-weight: 700; text-transform: uppercase;">🟢 Next-Day Long Trigger</div>'
+            f'<div style="color: #FFF; font-size: 1.05rem; font-weight: 800; margin: 2px 0;">Above ₹{pred["buy_trigger"]:,.2f}</div>'
+            f'<div style="color: #94A3B8; font-size: 0.75rem;">Target 1: <b>₹{pred["target_1"]:,.2f}</b> | Target 2: <b>₹{pred["target_2"]:,.2f}</b><br>Stop Loss: <b>₹{pred["long_sl"]:,.2f}</b></div>'
+            f'</div>',
+            unsafe_allow_html=True
+        )
+    with trig_c2:
+        st.markdown(
+            f'<div style="background: rgba(239, 68, 68, 0.08); border: 1px solid rgba(239, 68, 68, 0.35); border-left: 4px solid #EF4444; border-radius: 8px; padding: 10px 14px;">'
+            f'<div style="color: #F87171; font-size: 0.78rem; font-weight: 700; text-transform: uppercase;">🔴 Downside Breakdown Trigger</div>'
+            f'<div style="color: #FFF; font-size: 1.05rem; font-weight: 800; margin: 2px 0;">Below ₹{pred["sell_trigger"]:,.2f}</div>'
+            f'<div style="color: #94A3B8; font-size: 0.75rem;">Target 1: <b>₹{pred["short_t1"]:,.2f}</b> | Target 2: <b>₹{pred["short_t2"]:,.2f}</b><br>Stop Loss: <b>₹{pred["short_sl"]:,.2f}</b></div>'
+            f'</div>',
+            unsafe_allow_html=True
+        )
+    with trig_c3:
+        st.markdown(
+            f'<div style="background: rgba(99, 102, 241, 0.08); border: 1px solid rgba(99, 102, 241, 0.35); border-left: 4px solid #6366F1; border-radius: 8px; padding: 10px 14px;">'
+            f'<div style="color: #A5B4FC; font-size: 0.78rem; font-weight: 700; text-transform: uppercase;">🛡️ Key Dynamic Supports</div>'
+            f'<div style="color: #FFF; font-size: 1.05rem; font-weight: 800; margin: 2px 0;">20 EMA: ₹{pred["ema20"]:,.2f}</div>'
+            f'<div style="color: #94A3B8; font-size: 0.75rem;">50 EMA: <b>₹{pred["ema50"]:,.2f}</b> | 200 SMA: <b>₹{pred["sma200"]:,.2f}</b><br>RVOL: <b>{pred["rvol"]:.2f}x</b> | Squeeze: <b>{"YES (NR7)" if pred["is_squeeze"] else "Normal"}</b></div>'
+            f'</div>',
+            unsafe_allow_html=True
+        )
+
+    # Plot Chart
+    plot_results_next_day_chart(selected_sym, df, pred)
+
+    # Tactical Notes Strip
+    with st.container():
+        st.markdown("**💡 Next-Day Execution Rules & Tactical Notes:**")
+        for note in pred["tactical_notes"]:
+            st.markdown(f"- {note}")
+
+    st.markdown("---")
+
+    # ----------------- SECTION 2: RESULTS SCORECARD OR PRE-EARNINGS PLAYBOOK -----------------
+    if is_declared:
+        st.markdown(f"#### 📊 {selected_sym} — Financial Results Scorecard ({s_meta.get('quarter', 'Latest Quarter')})")
+        sc1, sc2, sc3, sc4 = st.columns(4)
+        sc1.metric(
+            "Quarterly Revenue",
+            f"₹{s_meta.get('revenue_cr', 0):,.0f} Cr",
+            delta=f"{s_meta.get('revenue_yoy_pct', 0):+.1f}% YoY"
+        )
+        sc2.metric(
+            "Net Profit (PAT)",
+            f"₹{s_meta.get('net_profit_cr', 0):,.0f} Cr",
+            delta=f"{s_meta.get('profit_yoy_pct', 0):+.1f}% YoY"
+        )
+        sc3.metric(
+            "Operating Margin",
+            f"{s_meta.get('ebitda_margin_pct', 0):.1f}%",
+            delta=f"{s_meta.get('margin_change_bps', 0):+d} bps"
+        )
+        verdict = s_meta.get("verdict", "IN_LINE")
+        v_color = "#10B981" if verdict == "BEAT" else ("#EF4444" if verdict == "MISS" else "#F59E0B")
+        sc4.markdown(
+            f'<div style="background: rgba(30, 41, 59, 0.7); border: 1px solid {v_color}; border-radius: 8px; padding: 12px; text-align: center;">'
+            f'<div style="color: #94A3B8; font-size: 0.75rem; font-weight: 700; text-transform: uppercase;">Consensus Verdict</div>'
+            f'<div style="color: {v_color}; font-size: 1.15rem; font-weight: 800; margin-top: 2px;">{verdict}</div>'
+            f'</div>',
+            unsafe_allow_html=True
+        )
+
+        if "drivers" in s_meta and s_meta["drivers"]:
+            st.markdown("**Key Management Drivers & Earnings Highlights:**")
+            for d in s_meta["drivers"]:
+                st.markdown(f"- {d}")
+    else:
+        # Pre-earnings roadmap
+        st.markdown(f"#### ⏳ {selected_sym} — Pre-Earnings Setup & Consensus Roadmap")
+        p_c1, p_c2, p_c3 = st.columns(3)
+        p_c1.metric("Scheduled Result Date", s_meta.get("expected_date", "Upcoming"), delta=s_meta.get("timing_window", "Current Week"))
+        p_c2.metric("Consensus Est. Revenue", f"₹{s_meta.get('est_revenue_cr', 0):,.0f} Cr")
+        p_c3.metric("Consensus Est. Profit", f"₹{s_meta.get('est_profit_cr', 0):,.0f} Cr")
+
+        st.markdown(
+            f'<div style="background: rgba(30, 41, 59, 0.6); border: 1px solid rgba(245, 158, 11, 0.4); border-radius: 8px; padding: 12px 16px; margin: 12px 0;">'
+            f'<div style="color: #FBBF24; font-weight: 700; font-size: 0.85rem;">🛡️ Pre-Announcement Risk Defense:</div>'
+            f'<div style="color: #CBD5E1; font-size: 0.82rem; margin-top: 4px;">'
+            f'Historical average move on results day is <b>~{s_meta.get("historical_move_pct", 3.5)}%</b>. '
+            f'Avoid carrying unhedged long call or put options due to rapid post-announcement Implied Volatility (IV) collapse. '
+            f'Wait for the opening 15-minute reaction candle post announcement before initiating directional momentum trades.'
+            f'</div>'
+            f'</div>',
+            unsafe_allow_html=True
+        )
 
 # ----------------- AUTHENTICATION GATE -----------------
 # Ensure only authenticated users can access screeners and market results
@@ -2669,7 +2941,7 @@ elif run_btn or "cached_results" in st.session_state:
 
     levels_tab_name = "🎯 Custom Stock Levels (Rise / Fall)" if universe_choice == "Custom" else "🎯 Two-Way Levels (Rise / Fall)"
 
-    tab_levels, tab_indices, tab_dipleaders, tab_ai, tab_futures, tab_screeners, tab_fno, tab_backtest, tab_tracker, tab_charts, tab_docs, tab_audit = st.tabs([
+    tab_levels, tab_indices, tab_dipleaders, tab_ai, tab_futures, tab_screeners, tab_fno, tab_results, tab_backtest, tab_tracker, tab_charts, tab_docs, tab_audit = st.tabs([
         levels_tab_name,
         "🏛️ Indices & Macros",
         "🚀 First-to-Recover Dip Leaders",
@@ -2677,6 +2949,7 @@ elif run_btn or "cached_results" in st.session_state:
         "⚡ High-Conviction Futures Desk",
         "📊 Strategy Shortlists",
         "⚡ Live F&O Section",
+        "📢 Recent Results Scanner",
         "🧪 Strategy Backtesting & Research",
         "📌 Live Item Tracker",
         "📈 Technical Chart View",
@@ -4710,6 +4983,9 @@ elif run_btn or "cached_results" in st.session_state:
     with tab_fno:
         render_fno_section_view(current_user=get_current_user() or "trader", data_dict=data_dict)
 
+    with tab_results:
+        render_recent_results_scanner_view(data_dict, prefix="dash_results")
+
     with tab_backtest:
         render_backtesting_view(current_user=get_current_user() or "trader", data_dict=data_dict)
 
@@ -5007,17 +5283,18 @@ elif run_btn or "cached_results" in st.session_state:
 
 else:
     # ----------------- HOME LANDING PAGE: SEARCH FOR RECOMMENDATIONS FIRST -----------------
-    tab_search_home, tab_indep_bt_home, tab_tracker_home = st.tabs([
+    tab_search_home, tab_results_home, tab_indep_bt_home, tab_tracker_home = st.tabs([
         "🔍 Search Trade Recommendations",
+        "📢 Recent Results Scanner",
         "🧪 Independent Strategy Backtesting (Optional)",
         "📌 Live Item Tracker"
     ])
 
     with tab_search_home:
-        def _run_preset_screening(u_name, strat, top_limit=5):
+        def _run_preset_screening(u_name, strat, top_limit=5, custom_syms=""):
             with st.spinner("Syncing candles, macro indicators & computing vectorized screeners..."):
                 symbols, data_dict, results, index_results, custom_levels, elapsed, data_health, macro_context = execute_screening(
-                    u_name, "", strat, top_limit, provider_choice,
+                    u_name, custom_syms, strat, top_limit, provider_choice,
                     breeze_api_key_in, breeze_secret_key_in, breeze_session_token_in,
                     bypass_cache=bypass_cache_flag, cache_ttl=cache_ttl
                 )
@@ -5069,25 +5346,37 @@ else:
         st.markdown("#### ⚡ Popular Recommendation Presets")
         st.caption("Quickly trigger high-conviction screening workflows with pre-tuned parameters:")
 
-        # Top Highlight: High-Conviction Futures Desk
-        with st.container():
+        # Top Highlight: High-Conviction Futures Desk & Corporate Results Scanner
+        feat_c1, feat_c2 = st.columns(2)
+        with feat_c1:
             st.markdown(
                 '<div style="background: linear-gradient(135deg, rgba(30, 27, 75, 0.6) 0%, rgba(15, 23, 42, 0.8) 100%); '
-                'border: 1px solid rgba(129, 140, 248, 0.4); border-radius: 10px; padding: 12px 16px; margin-bottom: 12px;">'
-                '<div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px;">'
-                '<div>'
+                'border: 1px solid rgba(129, 140, 248, 0.4); border-radius: 10px; padding: 12px 16px; margin-bottom: 12px; min-height: 102px;">'
                 '<div style="display: flex; align-items: center; gap: 8px;">'
                 '<span style="background: #4F46E5; color: #FFF; font-size: 0.7rem; font-weight: 800; padding: 2px 7px; border-radius: 4px; text-transform: uppercase;">FEATURED DESK</span>'
-                '<span style="color: #F8FAFC; font-weight: 700; font-size: 1.0rem;">High-Conviction Futures Desk (Buy & Sell)</span>'
+                '<span style="color: #F8FAFC; font-weight: 700; font-size: 0.95rem;">High-Conviction Futures Desk</span>'
                 '</div>'
-                '<div style="color: #94A3B8; font-size: 0.8rem; margin-top: 3px;">Ultra-strict risk filters: Identifies F&O candidates with lowest failure rate and high asymmetry.</div>'
-                '</div>'
-                '</div>'
+                '<div style="color: #94A3B8; font-size: 0.8rem; margin-top: 4px;">Ultra-strict risk filters: Identifies F&O candidates with lowest failure rate and high asymmetry.</div>'
                 '</div>',
                 unsafe_allow_html=True
             )
-            if st.button("⚡ High-Conviction Futures Desk (Buy & Sell)", key="preset_futures_desk", use_container_width=True, type="primary"):
+            if st.button("⚡ High-Conviction Futures Desk", key="preset_futures_desk", use_container_width=True, type="primary"):
                 _run_preset_screening("NSE_FO", "All Strategies", 6)
+
+        with feat_c2:
+            st.markdown(
+                '<div style="background: linear-gradient(135deg, rgba(6, 78, 59, 0.5) 0%, rgba(15, 23, 42, 0.8) 100%); '
+                'border: 1px solid rgba(16, 185, 129, 0.4); border-radius: 10px; padding: 12px 16px; margin-bottom: 12px; min-height: 102px;">'
+                '<div style="display: flex; align-items: center; gap: 8px;">'
+                '<span style="background: #059669; color: #FFF; font-size: 0.7rem; font-weight: 800; padding: 2px 7px; border-radius: 4px; text-transform: uppercase;">EARNINGS DESK</span>'
+                '<span style="color: #F8FAFC; font-weight: 700; font-size: 0.95rem;">Corporate Results Scanner</span>'
+                '</div>'
+                '<div style="color: #94A3B8; font-size: 0.8rem; margin-top: 4px;">Quarterly earnings plays: Declared/upcoming results this & next week with next-day price trajectories.</div>'
+                '</div>',
+                unsafe_allow_html=True
+            )
+            if st.button("📢 Screen Corporate Earnings Leaders", key="preset_results_scanner", use_container_width=True):
+                _run_preset_screening("Custom", "All Strategies", 8, custom_syms="RELIANCE, TCS, INFY, HDFCBANK, MAZDOCK, TATAMOTORS, SBIN, AXISBANK")
 
         p_col1, p_col2, p_col3 = st.columns(3)
         with p_col1:
@@ -5190,6 +5479,9 @@ else:
                 st.session_state["data_health"] = data_health
                 st.session_state["macro_context"] = macro_context
                 st.rerun()
+
+    with tab_results_home:
+        render_recent_results_scanner_view(data_dict={}, prefix="home_results")
 
     with tab_indep_bt_home:
         st.markdown("### 🧪 Independent Strategy Backtesting & Research")

@@ -5,6 +5,7 @@ Ideal for weekend scans, 52-week high breakout analysis, and daily OHLCV backfil
 """
 
 import json
+import time
 import urllib.request
 from datetime import datetime, timezone, timedelta
 from concurrent.futures import ThreadPoolExecutor, as_completed
